@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<h1>System</h1>
+<div class="card">
+  <h2>Services checklist</h2>
+  <p>Configure these in <code>config/.env</code>. See <code>config/SERVICES_CHECKLIST.md</code> for where to get keys.</p>
+  <table>
+    <thead><tr><th>Category</th><th>Service</th><th>Status</th></tr></thead>
+    <tbody id="checklist-tbody"><tr><td colspan="3">Loading…</td></tr></tbody>
+  </table>
+</div>
+<div class="card">
+  <h2>Health</h2>
+  <p><a href="/health" target="_blank">/health</a> — API and config status.</p>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+fetch('/api/system/services-checklist').then(r => r.json()).then(data => {
+  const tbody = document.getElementById('checklist-tbody');
+  const rows = [];
+  const categories = [
+    ['Data providers', data.data_providers],
+    ['Broker', data.broker],
+    ['AI', data.ai],
+    ['Notifications', data.notifications]
+  ];
+  categories.forEach(([cat, list]) => {
+    (list || []).forEach(s => {
+      rows.push(`<tr><td>${cat}</td><td>${s.name}</td><td><span class="status-dot ${s.configured ? 'status-ok' : 'status-warn'}"></span>${s.configured ? 'Configured' : 'Missing'}</td></tr>`);
+    });
+  });
+  tbody.innerHTML = rows.length ? rows.join('') : '<tr><td colspan="3">No data</td></tr>';
+}).catch(() => { document.getElementById('checklist-tbody').innerHTML = '<tr><td colspan="3">Failed to load</td></tr>'; });
+</script>
+{% endblock %}

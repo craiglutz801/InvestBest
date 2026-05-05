@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<h1>Dashboard</h1>
+<div class="grid grid-3">
+  <div class="card">
+    <h2>Portfolio value</h2>
+    <div class="metric" id="portfolio-value">—</div>
+    <p class="text-muted" style="color: var(--text-muted); font-size: 0.9rem;">Paper trading</p>
+  </div>
+  <div class="card">
+    <h2>Daily PnL</h2>
+    <div class="metric" id="daily-pnl">—</div>
+  </div>
+  <div class="card">
+    <h2>Active strategies</h2>
+    <div class="metric" id="active-strategies">—</div>
+  </div>
+</div>
+<div class="grid grid-2">
+  <div class="card">
+    <h2>Recent signals</h2>
+    <table>
+      <thead><tr><th>Time</th><th>Strategy</th><th>Symbol</th><th>Signal</th><th>Conf.</th></tr></thead>
+      <tbody id="signals-tbody">
+        <tr><td colspan="5">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="card">
+    <h2>System status</h2>
+    <ul id="system-status" style="list-style: none; padding: 0; margin: 0;">
+      <li>Loading…</li>
+    </ul>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  fetch('/api/signals?limit=10').then(r => r.json()).then(data => {
+    const tbody = document.getElementById('signals-tbody');
+    if (!data.length) { tbody.innerHTML = '<tr><td colspan="5">No signals yet</td></tr>'; return; }
+    tbody.innerHTML = data.map(s => {
+      const ts = s.timestamp ? new Date(s.timestamp).toLocaleString() : '—';
+      return `<tr><td>${ts}</td><td>${s.strategy_id}</td><td>${s.symbol}</td><td>${s.signal}</td><td>${s.confidence != null ? (s.confidence * 100).toFixed(1) + '%' : '—'}</td></tr>`;
+    }).join('');
+  }).catch(() => { document.getElementById('signals-tbody').innerHTML = '<tr><td colspan="5">Failed to load</td></tr>'; });
+
+  fetch('/api/system/status').then(r => r.json()).then(data => {
+    const el = document.getElementById('system-status');
+    const d = data.data || {};
+    el.innerHTML = [
+      ['Polygon', d.polygon], ['Alpaca', d.alpaca], ['FRED', d.fred], ['OpenAI', d.openai]
+    ].map(([name, status]) => {
+      const cls = status === 'configured' ? 'status-ok' : 'status-warn';
+      return `<li><span class="status-dot ${cls}"></span>${name}: ${status}</li>`;
+    }).join('');
+  }).catch(() => { document.getElementById('system-status').innerHTML = '<li>Failed to load status</li>'; });
+
+  fetch('/api/strategies').then(r => r.json()).then(data => {
+    const active = (data || []).filter(s => s.status === 'active').length;
+    document.getElementById('active-strategies').textContent = active;
+  });
+  document.getElementById('portfolio-value').textContent = '—';
+  document.getElementById('daily-pnl').textContent = '—';
+})();
+</script>
+{% endblock %}

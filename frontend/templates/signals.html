@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<h1>Signals</h1>
+<div class="card">
+  <table>
+    <thead><tr><th>Time</th><th>Strategy ID</th><th>Symbol</th><th>Signal</th><th>Confidence</th></tr></thead>
+    <tbody id="signals-tbody"><tr><td colspan="5">Loading…</td></tr></tbody>
+  </table>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+fetch('/api/signals?limit=100').then(r => r.json()).then(data => {
+  const tbody = document.getElementById('signals-tbody');
+  if (!data.length) { tbody.innerHTML = '<tr><td colspan="5">No signals yet. Run strategies to generate signals.</td></tr>'; return; }
+  tbody.innerHTML = data.map(s => {
+    const ts = s.timestamp ? new Date(s.timestamp).toLocaleString() : '—';
+    const conf = s.confidence != null ? (s.confidence * 100).toFixed(1) + '%' : '—';
+    return `<tr><td>${ts}</td><td>${s.strategy_id}</td><td>${s.symbol}</td><td>${s.signal}</td><td>${conf}</td></tr>`;
+  }).join('');
+}).catch(() => { document.getElementById('signals-tbody').innerHTML = '<tr><td colspan="5">Failed to load</td></tr>'; });
+</script>
+{% endblock %}

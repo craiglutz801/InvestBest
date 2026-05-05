@@ -1,0 +1,57 @@
+{
+  "name": "investbest-web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "postinstall": "prisma generate",
+    "clean": "rm -rf .next node_modules/.cache",
+    "dev:clean": "npm run clean && next dev --port 3000",
+    "repair": "npm run clean && prisma generate && prisma db push && npm run db:seed && npm run build",
+    "dev": "next dev --port 3000",
+    "dev:pm2": "pm2 start ecosystem.config.cjs",
+    "dev:pm2:stop": "pm2 stop investbest-web",
+    "dev:pm2:logs": "pm2 logs investbest-web",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "db:seed": "prisma db seed",
+    "db:migrate": "prisma migrate dev",
+    "test": "vitest run"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.5.0",
+    "@radix-ui/react-label": "^2.1.2",
+    "@radix-ui/react-slot": "^1.1.2",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.487.0",
+    "next": "15.5.14",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "recharts": "^2.15.0",
+    "tailwind-merge": "^3.0.2",
+    "tailwindcss-animate": "^1.0.7",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3",
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "autoprefixer": "^10.4.21",
+    "eslint": "^9",
+    "eslint-config-next": "15.5.14",
+    "pm2": "^5.4.3",
+    "postcss": "^8",
+    "prisma": "^6.5.0",
+    "tailwindcss": "^3.4.0",
+    "tsx": "^4.19.3",
+    "typescript": "^5",
+    "vitest": "^3.0.9"
+  }
+}

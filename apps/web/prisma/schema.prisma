@@ -1,0 +1,584 @@
+// InvestBest — paper trading schema (Build Spec §13)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  settings              AppSettings?
+  decisionRuns          DecisionRun[]
+  paperPositions        PaperPosition[]
+  paperTrades           PaperTrade[]
+  portfolioSnapshots    PortfolioSnapshot[]
+  holdingValueLogs      HoldingValueLog[]
+  positionValuations    PositionValuation[]
+  searchProfiles        SearchProfile[]
+  quoteSnapshots        QuoteSnapshot[]
+  agentScheduleSettings AgentScheduleSettings?
+  agentRunLocks         AgentRunLock[]
+  tradeAttributionSnapshots TradeAttributionSnapshot[]
+}
+
+model AppSettings {
+  id                    String         @id @default(cuid())
+  userId                String         @unique
+  user                  User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  startingCash          Decimal        @default(100000) @db.Decimal(18, 2)
+  maxPositionPct        Decimal        @default(10) @db.Decimal(6, 2)
+  maxNewPositionsPerRun Int            @default(3)
+  targetHoldings        Int            @default(12)
+  stopLossPct           Decimal        @default(8) @db.Decimal(6, 2)
+  takeProfitPct         Decimal        @default(15) @db.Decimal(6, 2)
+  minConfidence         Decimal        @default(40) @db.Decimal(6, 2)
+  cashReservePct        Decimal        @default(10) @db.Decimal(6, 2)
+  runFrequencyMinutes   Int            @default(60)
+  paperStartDate        DateTime?
+  paperEndDate          DateTime?
+  newsEnabled           Boolean        @default(false)
+  shortingEnabled       Boolean        @default(false)
+  defaultSlippagePct    Decimal        @default(0.05) @db.Decimal(6, 4)
+  buyScoreThreshold     Decimal        @default(45) @db.Decimal(6, 2)
+  sellRiskThreshold     Decimal        @default(65) @db.Decimal(6, 2)
+  cooldownHours         Int            @default(24)
+  /**
+   * If false (default), never sell a holding when the live quote failed this run (STALE_DATA_HOLD).
+   */
+  staleQuoteAllowSells  Boolean        @default(false)
+  /**
+   * Trailing-stop give-back %, drives the trailing_stop branch in shouldSell.
+   */
+  trailingGiveBackPct   Decimal        @default(4) @db.Decimal(6, 2)
+  /**
+   * off | soft | strict — controls SPY market-regime throttle on new buys.
+   */
+  regimeFilterMode      String         @default("soft")
+  /**
+   * Minimum 20-day average dollar volume required to pass the liquidity guard. 0 disables.
+   */
+  minDollarVolume       Decimal        @default(1000000) @db.Decimal(18, 2)
+  /**
+   * Annualized vol target for vol-targeted position sizing (0.18 = 18%). 0 disables.
+   */
+  volTargetAnnualized   Decimal        @default(0) @db.Decimal(8, 4)
+  /**
+   * Extra points added to buy score threshold — higher = fewer long buys (high conviction).
+   */
+  buyScoreMargin           Decimal        @default(0) @db.Decimal(6, 2)
+  /**
+   * Extra points required on confidence score for new long buys only.
+   */
+  confidenceMarginForBuy   Decimal        @default(0) @db.Decimal(6, 2)
+  /**
+   * When true, long buys require positive 5d and 20d momentum.
+   */
+  requireMomentumForBuy    Boolean        @default(false)
+  /**
+   * Max annualized vol (from rules features) to allow long buys. Matches prior hard-coded 0.6 when unset in logic uses default 0.6.
+   */
+  maxBuyAnnualVol          Decimal        @default(0.6) @db.Decimal(8, 4)
+  /**
+   * Minimum bear-score (0–100) to open a short when shorting is enabled.
+   */
+  bearScoreThreshold       Decimal        @default(82) @db.Decimal(6, 2)
+  /**
+   * Extra confidence required for shorts vs minConfidence.
+   */
+  confidenceMarginForShort Decimal        @default(10) @db.Decimal(6, 2)
+  /**
+   * When true, new shorts only in SPY-assessed bearish regime.
+   */
+  shortOnlyInBearRegime    Boolean        @default(true)
+  /**
+   * Cap on new short positions per agent run.
+   */
+  maxShortPositionsPerRun  Int            @default(1)
+  /**
+   * Cover shorts when rules buy score reaches at least this (recovery signal).
+   */
+  buyScoreCoverShortThreshold Decimal     @default(78) @db.Decimal(6, 2)
+  searchProfileId       String?
+  searchProfile         SearchProfile? @relation(fields: [searchProfileId], references: [id], onDelete: SetNull)
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+}
+
+model Symbol {
+  id                 String   @id @default(cuid())
+  ticker             String   @unique
+  name               String?
+  assetType          String // equity | etf | commodity_proxy
+  exchange           String?
+  isActive           Boolean  @default(true)
+  dataProviderSymbol String?
+  /**
+   * Primary segment label for discovery UI (e.g. defense, energy).
+   */
+  segmentKey         String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  marketSnapshots       MarketSnapshot[]
+  indicatorSnapshots    IndicatorSnapshot[]
+  featureSnapshots      FeatureSnapshot[]
+  modelScores           ModelScore[]
+  decisionRunItems      DecisionRunItem[]
+  paperPositions        PaperPosition[]
+  paperTrades           PaperTrade[]
+  holdingValueLogs      HoldingValueLog[]
+  segmentSymbols        SegmentSymbol[]
+  quoteSnapshots        QuoteSnapshot[]
+  positionValuations    PositionValuation[]
+  decisionRunCandidates DecisionRunCandidate[]
+}
+
+model MarketSnapshot {
+  id        String   @id @default(cuid())
+  symbolId  String
+  symbol    Symbol   @relation(fields: [symbolId], references: [id], onDelete: Cascade)
+  timestamp DateTime
+  open      Decimal  @db.Decimal(18, 6)
+  high      Decimal  @db.Decimal(18, 6)
+  low       Decimal  @db.Decimal(18, 6)
+  close     Decimal  @db.Decimal(18, 6)
+  volume    Decimal? @db.Decimal(18, 2)
+  source    String   @default("twelvedata")
+  interval  String   @default("1day")
+
+  @@index([symbolId, timestamp])
+}
+
+model IndicatorSnapshot {
+  id            String   @id @default(cuid())
+  symbolId      String
+  symbol        Symbol   @relation(fields: [symbolId], references: [id], onDelete: Cascade)
+  timestamp     DateTime
+  rsi           Decimal? @db.Decimal(10, 4)
+  sma20         Decimal? @db.Decimal(18, 6)
+  sma50         Decimal? @db.Decimal(18, 6)
+  ema12         Decimal? @db.Decimal(18, 6)
+  ema26         Decimal? @db.Decimal(18, 6)
+  macd          Decimal? @db.Decimal(18, 6)
+  atr           Decimal? @db.Decimal(18, 6)
+  bbUpper       Decimal? @db.Decimal(18, 6)
+  bbLower       Decimal? @db.Decimal(18, 6)
+  relVolume     Decimal? @db.Decimal(10, 4)
+  volatility5d  Decimal? @db.Decimal(10, 6)
+  volatility20d Decimal? @db.Decimal(10, 6)
+
+  @@index([symbolId, timestamp])
+}
+
+model FeatureSnapshot {
+  id                    String   @id @default(cuid())
+  symbolId              String
+  symbol                Symbol   @relation(fields: [symbolId], references: [id], onDelete: Cascade)
+  timestamp             DateTime
+  featuresJson          String   @db.Text
+  dataCompletenessScore Decimal  @default(1) @db.Decimal(6, 4)
+
+  modelScores ModelScore[]
+
+  @@index([symbolId, timestamp])
+}
+
+model ModelScore {
+  id                     String           @id @default(cuid())
+  symbolId               String
+  symbol                 Symbol           @relation(fields: [symbolId], references: [id], onDelete: Cascade)
+  timestamp              DateTime
+  buyScore               Decimal          @db.Decimal(6, 2)
+  sellRiskScore          Decimal          @db.Decimal(6, 2)
+  expectedReturn5d       Decimal?         @db.Decimal(10, 6)
+  expectedDrawdownRisk5d Decimal?         @db.Decimal(10, 6)
+  confidenceScore        Decimal          @db.Decimal(6, 2)
+  modelVersion           String           @default("rules-v1")
+  featureSnapshotId      String?
+  featureSnapshot        FeatureSnapshot? @relation(fields: [featureSnapshotId], references: [id])
+
+  @@index([symbolId, timestamp])
+}
+
+model DecisionRun {
+  id                   String    @id @default(cuid())
+  userId               String
+  user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  startedAt            DateTime  @default(now())
+  finishedAt           DateTime?
+  status               String    @default("running") // running | completed | failed | degraded | skipped
+  universeSize         Int       @default(0)
+  candidatesCount      Int       @default(0)
+  buysCount            Int       @default(0)
+  sellsCount           Int       @default(0)
+  portfolioValueBefore Decimal?  @db.Decimal(18, 2)
+  portfolioValueAfter  Decimal?  @db.Decimal(18, 2)
+  notesJson            String?   @db.Text
+  idempotencyKey       String?   @unique
+  llmSummary           String?   @db.Text
+  dryRun               Boolean   @default(false)
+  /**
+   * manual | scheduled | retry | research | shadow | backtest — Strategy Upgrade §3.3.
+   */
+  triggerSource        String?
+  /**
+   * paper_trade | dry_run | shadow | backtest — Strategy Upgrade §3.3.
+   */
+  runMode              String    @default("paper_trade")
+  scheduleId           String?
+  lockId               String?
+  strategyVersionId    String?
+  searchProfileId      String?
+
+  items                  DecisionRunItem[]
+  paperTrades            PaperTrade[]
+  decisionSearchSnapshot DecisionSearchSnapshot?
+  candidates             DecisionRunCandidate[]
+
+  @@index([userId, startedAt])
+  @@index([userId, triggerSource, startedAt])
+}
+
+model DecisionRunItem {
+  id                   String      @id @default(cuid())
+  decisionRunId        String
+  decisionRun          DecisionRun @relation(fields: [decisionRunId], references: [id], onDelete: Cascade)
+  symbolId             String
+  symbol               Symbol      @relation(fields: [symbolId], references: [id])
+  actionRecommendation String // buy | sell | hold | skip
+  rank                 Int?
+  blocked              Boolean     @default(false)
+  blockedReason        String?     @db.Text
+  buyScore             Decimal?    @db.Decimal(6, 2)
+  sellRiskScore        Decimal?    @db.Decimal(6, 2)
+  confidenceScore      Decimal?    @db.Decimal(6, 2)
+  rationaleShort       String?     @db.Text
+}
+
+model PaperPosition {
+  id              String    @id @default(cuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  symbolId        String
+  symbol          Symbol    @relation(fields: [symbolId], references: [id])
+  quantity        Decimal   @db.Decimal(18, 8)
+  avgCost         Decimal   @db.Decimal(18, 6)
+  openedAt        DateTime  @default(now())
+  lastUpdatedAt   DateTime  @updatedAt
+  isOpen          Boolean   @default(true)
+  /**
+   * Short obligation (sold borrowed shares). Quantity stays positive; mark-to-market and PnL invert vs long.
+   */
+  isShort         Boolean   @default(false)
+  lastAgentNote   String?   @db.Text
+  lastQuoteAt     DateTime?
+  /**
+   * ok | stale — stale when live quote failed during last agent run.
+   */
+  valuationStatus String?
+
+  @@unique([userId, symbolId])
+  @@index([userId, isOpen])
+}
+
+model PaperTrade {
+  id              String       @id @default(cuid())
+  userId          String
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  symbolId        String
+  symbol          Symbol       @relation(fields: [symbolId], references: [id])
+  decisionRunId   String?
+  decisionRun     DecisionRun? @relation(fields: [decisionRunId], references: [id])
+  action          String // BUY | SELL | SHORT | COVER
+  quantity        Decimal      @db.Decimal(18, 8)
+  price           Decimal      @db.Decimal(18, 6)
+  slippagePct     Decimal      @default(0) @db.Decimal(8, 4)
+  fees            Decimal      @default(0) @db.Decimal(18, 2)
+  grossAmount     Decimal      @db.Decimal(18, 2)
+  reasonCode      String?
+  reasonText      String?      @db.Text
+  modelVersion    String?
+  confidenceScore Decimal?     @db.Decimal(6, 2)
+  executedAt      DateTime     @default(now())
+  cashBefore      Decimal?     @db.Decimal(18, 2)
+  cashAfter       Decimal?     @db.Decimal(18, 2)
+  expectedHorizon String? // e.g. "5d"
+
+  @@index([userId, executedAt])
+}
+
+model PortfolioSnapshot {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  timestamp      DateTime @default(now())
+  cash           Decimal  @db.Decimal(18, 2)
+  investedValue  Decimal  @db.Decimal(18, 2)
+  totalValue     Decimal  @db.Decimal(18, 2)
+  unrealizedPnl  Decimal  @db.Decimal(18, 2)
+  realizedPnl    Decimal  @db.Decimal(18, 2)
+  benchmarkValue Decimal? @db.Decimal(18, 2)
+
+  @@index([userId, timestamp])
+}
+
+/**
+ * One row per open holding, per completed agent run — position mark at run time (for accurate charts vs daily bar timestamps).
+ */
+model HoldingValueLog {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  symbolId      String
+  symbol        Symbol   @relation(fields: [symbolId], references: [id], onDelete: Cascade)
+  decisionRunId String?
+  recordedAt    DateTime @default(now())
+  quantity      Decimal  @db.Decimal(18, 8)
+  price         Decimal  @db.Decimal(18, 6)
+  marketValue   Decimal  @db.Decimal(18, 2)
+
+  @@index([userId, symbolId, recordedAt])
+}
+
+model UniverseSegment {
+  id            String   @id @default(cuid())
+  key           String   @unique
+  name          String
+  description   String?
+  isEnabled     Boolean  @default(true)
+  segmentWeight Decimal  @default(1) @db.Decimal(6, 3)
+  maxPositions  Int      @default(8)
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  segmentSymbols SegmentSymbol[]
+}
+
+model SegmentSymbol {
+  id                String          @id @default(cuid())
+  universeSegmentId String
+  universeSegment   UniverseSegment @relation(fields: [universeSegmentId], references: [id], onDelete: Cascade)
+  symbolId          String
+  symbol            Symbol          @relation(fields: [symbolId], references: [id], onDelete: Cascade)
+  isEnabled         Boolean         @default(true)
+  priority          Int             @default(0)
+
+  @@unique([universeSegmentId, symbolId])
+  @@index([symbolId])
+}
+
+model QuoteSnapshot {
+  id                String   @id @default(cuid())
+  symbolId          String
+  symbol            Symbol   @relation(fields: [symbolId], references: [id], onDelete: Cascade)
+  decisionRunId     String?
+  userId            String?
+  user              User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  timestamp         DateTime @default(now())
+  price             Decimal  @db.Decimal(18, 6)
+  open              Decimal? @db.Decimal(18, 6)
+  high              Decimal? @db.Decimal(18, 6)
+  low               Decimal? @db.Decimal(18, 6)
+  previousClose     Decimal? @db.Decimal(18, 6)
+  change            Decimal? @db.Decimal(18, 6)
+  changePercent     Decimal? @db.Decimal(10, 6)
+  volume            Decimal? @db.Decimal(18, 2)
+  source            String   @default("twelvedata")
+  isRealtime        Boolean  @default(false)
+  asOfMarketSession String?
+
+  positionValuations PositionValuation[]
+
+  @@index([symbolId, timestamp])
+  @@index([decisionRunId])
+  @@index([userId])
+}
+
+model PositionValuation {
+  id               String         @id @default(cuid())
+  userId           String
+  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  symbolId         String
+  symbol           Symbol         @relation(fields: [symbolId], references: [id], onDelete: Cascade)
+  decisionRunId    String
+  timestamp        DateTime       @default(now())
+  quantity         Decimal        @db.Decimal(18, 8)
+  avgCost          Decimal        @db.Decimal(18, 6)
+  currentPrice     Decimal        @db.Decimal(18, 6)
+  marketValue      Decimal        @db.Decimal(18, 2)
+  unrealizedPnl    Decimal        @db.Decimal(18, 2)
+  unrealizedPnlPct Decimal        @db.Decimal(10, 4)
+  sellRiskScore    Decimal?       @db.Decimal(6, 2)
+  confidenceScore  Decimal?       @db.Decimal(6, 2)
+  quoteSnapshotId  String?
+  quoteSnapshot    QuoteSnapshot? @relation(fields: [quoteSnapshotId], references: [id], onDelete: SetNull)
+  valuationStatus  String         @default("ok")
+
+  @@index([userId, symbolId, timestamp])
+  @@index([decisionRunId])
+}
+
+model SearchProfile {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  isDefault   Boolean  @default(false)
+  profileJson String   @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  appSettings AppSettings[]
+
+  @@index([userId])
+}
+
+model DecisionSearchSnapshot {
+  id                    String      @id @default(cuid())
+  decisionRunId         String      @unique
+  decisionRun           DecisionRun @relation(fields: [decisionRunId], references: [id], onDelete: Cascade)
+  searchProfileId       String?
+  profileName           String?
+  profileJson           String?     @db.Text
+  filtersJson           String?     @db.Text
+  rankingInputsJson     String?     @db.Text
+  candidateExplorerJson String?     @db.Text
+  statsJson             String?     @db.Text
+}
+
+/**
+ * One row per universe symbol per run — full candidate explorer grid (addendum §7).
+ */
+model DecisionRunCandidate {
+  id              String      @id @default(cuid())
+  decisionRunId   String
+  decisionRun     DecisionRun @relation(fields: [decisionRunId], references: [id], onDelete: Cascade)
+  symbolId        String
+  symbol          Symbol      @relation(fields: [symbolId], references: [id], onDelete: Cascade)
+  ticker          String
+  segmentKey      String?
+  /**
+   * scored | ingest_failed | held | sold | stale_hold | skipped_sell | skipped_buy | bought
+   */
+  status          String
+  currentPrice    Decimal?    @db.Decimal(18, 6)
+  ret1d           Decimal?    @db.Decimal(10, 6)
+  ret5d           Decimal?    @db.Decimal(10, 6)
+  volatility20d   Decimal?    @db.Decimal(10, 6)
+  buyScore        Decimal?    @db.Decimal(6, 2)
+  sellRiskScore   Decimal?    @db.Decimal(6, 2)
+  confidenceScore Decimal?    @db.Decimal(6, 2)
+  buyRank         Int?
+  rejectionReason String?     @db.Text
+
+  @@unique([decisionRunId, symbolId])
+  @@index([decisionRunId])
+}
+
+/**
+ * Per-user agent scheduler configuration (Strategy Upgrade §3.1).
+ * Source of truth for whether scheduled runs are on, the cadence, market-hours rules,
+ * retry behavior, and bookkeeping (lastRunAt / nextRunAt / lastRunStatus / lastRunError).
+ * `AppSettings.runFrequencyMinutes` is preserved for back-compat but `frequencyMinutes`
+ * here is what the scheduler tick actually reads.
+ */
+model AgentScheduleSettings {
+  id                       String    @id @default(cuid())
+  userId                   String    @unique
+  user                     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  enabled                  Boolean   @default(true)
+  /**
+   * hourly | every_15_min | every_30_min | every_2h | every_4h | daily_after_close | daily_before_open | custom
+   */
+  schedulePreset           String    @default("hourly")
+  frequencyMinutes         Int       @default(60)
+  customCronExpression     String?
+  timezone                 String    @default("America/Denver")
+  runOnlyDuringMarketHours Boolean   @default(false)
+  runOnMarketDaysOnly      Boolean   @default(true)
+  skipIfRunAlreadyActive   Boolean   @default(true)
+  maxRunDurationMinutes    Int       @default(30)
+  retryFailedRuns          Boolean   @default(false)
+  maxRetries               Int       @default(0)
+  nextRunAt                DateTime?
+  lastRunAt                DateTime?
+  /**
+   * success | failed | skipped | running | timeout
+   */
+  lastRunStatus            String?
+  lastRunError             String?   @db.Text
+  /**
+   * ID of the most recent DecisionRun the scheduler kicked off (for UI link-throughs).
+   */
+  lastRunId                String?
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
+}
+
+/**
+ * Cross-trigger run lock (Strategy Upgrade §3.2 / §12.2).
+ * Used by both the manual Run-Agent-Now button and the scheduler tick to guarantee
+ * only one InvestBest agent run is active at a time per user. Lock auto-expires
+ * after `expiresAt` (defaulting to AGENT_RUN_LOCK_TIMEOUT_MINUTES) so a crashed
+ * run cannot wedge the system permanently.
+ */
+model AgentRunLock {
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /**
+   * "agent:user:<userId>" — kept unique so we can rely on Postgres constraint to serialize acquires.
+   */
+  lockKey       String    @unique
+  acquiredAt    DateTime  @default(now())
+  expiresAt     DateTime
+  releasedAt    DateTime?
+  runId         String?
+  /**
+   * active | released | expired | timeout
+   */
+  status        String    @default("active")
+  triggerSource String?
+
+  @@index([userId, status])
+  @@index([expiresAt])
+}
+
+/**
+ * Cached Strategy Diagnostics payload (Sprint 2 — §18.3).
+ * Rebuilt via POST /api/diagnostics/rebuild; GET endpoints can read latest or compute live.
+ */
+model TradeAttributionSnapshot {
+  id                         String   @id @default(cuid())
+  userId                     String
+  user                       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  generatedAt                DateTime @default(now())
+  windowStart                DateTime
+  windowEnd                  DateTime
+  metricsJson                String   @db.Text
+  bySymbolJson               String   @db.Text
+  bySegmentJson              String   @db.Text
+  byExitReasonJson           String   @db.Text
+  byEntryScoreBucketJson     String   @db.Text
+  byRegimeJson               String   @db.Text
+  byHoldingPeriodJson        String   @db.Text
+  byTriggerSourceJson        String   @db.Text
+  byVolatilityRegimeJson     String   @db.Text
+  byStrategyFamilyJson       String   @db.Text
+  byExitDayOfWeekJson        String   @db.Text
+  closedTradesJson           String   @db.Text
+  warningsJson               String   @db.Text
+  /** Equity + drawdown series for diagnostics charts (JSON). */
+  chartsJson                 String?  @db.Text
+
+  @@index([userId, generatedAt])
+}

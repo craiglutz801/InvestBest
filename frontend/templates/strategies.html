@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<h1>Strategies</h1>
+<div class="page-actions">
+  <button class="btn" id="btn-new-strategy">New strategy</button>
+</div>
+<div class="card">
+  <h2>Strategy list</h2>
+  <table>
+    <thead><tr><th>ID</th><th>Name</th><th>Status</th><th>Module</th><th>Actions</th></tr></thead>
+    <tbody id="strategies-tbody"><tr><td colspan="5">Loading…</td></tr></tbody>
+  </table>
+</div>
+
+<div class="card" id="strategy-form-card" style="display: none;">
+  <h2 id="form-title">New strategy</h2>
+  <form id="strategy-form">
+    <input type="hidden" id="strategy-id" name="id">
+    <div class="form-group">
+      <label>Name</label>
+      <input type="text" id="strategy-name" name="name" required>
+    </div>
+    <div class="form-group">
+      <label>Description</label>
+      <textarea id="strategy-description" name="description"></textarea>
+    </div>
+    <div class="form-group">
+      <label>Module path</label>
+      <input type="text" id="strategy-module" name="module_path" placeholder="e.g. backend.strategies.momentum">
+    </div>
+    <div class="form-group">
+      <label>Config (JSON)</label>
+      <textarea id="strategy-config" name="config_json" placeholder='{"lookback_days": 126, "top_n": 1}'></textarea>
+    </div>
+    <div class="form-group">
+      <button type="submit" class="btn">Save</button>
+      <button type="button" class="btn btn-secondary" id="btn-cancel-form">Cancel</button>
+    </div>
+  </form>
+</div>
+
+<div class="card" id="backtest-card" style="display: none;">
+  <h2>Backtest</h2>
+  <p>Strategy: <strong id="backtest-strategy-name"></strong></p>
+  <div class="form-group">
+    <label>Start date</label>
+    <input type="date" id="backtest-start">
+  </div>
+  <div class="form-group">
+    <label>End date</label>
+    <input type="date" id="backtest-end">
+  </div>
+  <button class="btn" id="btn-run-backtest">Run backtest</button>
+  <div id="backtest-results" style="margin-top: 1rem;"></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const tbody = document.getElementById('strategies-tbody');
+  const formCard = document.getElementById('strategy-form-card');
+  const form = document.getElementById('strategy-form');
+  const backtestCard = document.getElementById('backtest-card');
+  let currentStrategyId = null;
+
+  function loadStrategies() {
+    fetch('/api/strategies').then(r => r.json()).then(data => {
+      if (!data || !data.length) { tbody.innerHTML = '<tr><td colspan="5">No strategies. Create one.</td></tr>'; return; }
+      tbody.innerHTML = data.map(s => `
+        <tr>
+          <td>${s.id}</td>
+          <td>${s.name}</td>
+          <td>${s.status}</td>
+          <td>${s.module_path || '—'}</td>
+          <td>
+            <button class="btn btn-secondary" onclick="window.runBacktest(${s.id}, '${s.name.replace(/'/g, "\\'")}')">Backtest</button>
+          </td>
+        </tr>
+      `).join('');
+    });
+  }
+  window.runBacktest = function (id, name) {
+    currentStrategyId = id;
+    document.getElementById('backtest-strategy-name').textContent = name;
+    document.getElementById('backtest-results').innerHTML = '';
+    backtestCard.style.display = 'block';
+  };
+
+  document.getElementById('btn-new-strategy').onclick = function () {
+    currentStrategyId = null;
+    document.getElementById('form-title').textContent = 'New strategy';
+    form.reset();
+    document.getElementById('strategy-id').value = '';
+    formCard.style.display = 'block';
+  };
+  document.getElementById('btn-cancel-form').onclick = function () { formCard.style.display = 'none'; };
+
+  form.onsubmit = function (e) {
+    e.preventDefault();
+    const payload = {
+      name: document.getElementById('strategy-name').value,
+      description: document.getElementById('strategy-description').value || null,
+      module_path: document.getElementById('strategy-module').value || null,
+      config_json: document.getElementById('strategy-config').value || null
+    };
+    const id = document.getElementById('strategy-id').value;
+    const url = id ? '/api/strategies/' + id : '/api/strategies';
+    const method = id ? 'PATCH' : 'POST';
+    fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      .then(r => r.json())
+      .then(() => { formCard.style.display = 'none'; loadStrategies(); })
+      .catch(err => alert('Error: ' + err));
+  };
+
+  document.getElementById('btn-run-backtest').onclick = function () {
+    if (!currentStrategyId) return;
+    const start = document.getElementById('backtest-start').value || undefined;
+    const end = document.getElementById('backtest-end').value || undefined;
+    document.getElementById('backtest-results').innerHTML = 'Running…';
+    fetch('/api/strategies/backtest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ strategy_id: currentStrategyId, start_date: start, end_date: end })
+    })
+      .then(r => r.json())
+      .then(data => {
+        const m = data.metrics || {};
+        document.getElementById('backtest-results').innerHTML = m.error
+          ? '<span class="metric negative">' + m.error + '</span>'
+          : '<pre style="margin:0;">Sharpe: ' + (m.sharpe != null ? m.sharpe : '—') + '\nMax drawdown: ' + (m.max_drawdown != null ? m.max_drawdown : '—') + '\nWin rate: ' + (m.win_rate != null ? m.win_rate : '—') + '\nAnnual return: ' + (m.annual_return != null ? m.annual_return : '—') + '</pre>';
+      })
+      .catch(() => { document.getElementById('backtest-results').innerHTML = '<span class="metric negative">Request failed</span>'; });
+  };
+
+  loadStrategies();
+})();
+</script>
+{% endblock %}
