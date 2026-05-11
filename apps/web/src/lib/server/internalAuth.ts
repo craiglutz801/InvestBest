@@ -16,17 +16,23 @@ import type { NextRequest } from "next/server";
  * accepted with no secret configured to keep local dev frictionless.
  */
 export function internalAuthorized(req: NextRequest): boolean {
-  const secret =
-    process.env.INVESTBEST_INTERNAL_SECRET ??
-    process.env.INTERNAL_CRON_SECRET ??
-    process.env.CRON_SECRET ??
-    process.env.TRIGGER_SECRET_KEY;
-  if (!secret) {
+  const configuredSecrets = [
+    process.env.INVESTBEST_INTERNAL_SECRET,
+    process.env.INTERNAL_CRON_SECRET,
+    process.env.CRON_SECRET,
+    process.env.TRIGGER_SECRET_KEY,
+  ]
+    .map((s) => s?.trim())
+    .filter((s): s is string => Boolean(s));
+
+  if (configuredSecrets.length === 0) {
     return process.env.NODE_ENV !== "production";
   }
   const auth = req.headers.get("authorization");
   const bearer = auth?.startsWith("Bearer ") ? auth.slice(7).trim() : null;
   const headerLegacy = req.headers.get("x-investbest-secret");
   const headerSpec = req.headers.get("x-internal-cron-secret");
-  return bearer === secret || headerLegacy === secret || headerSpec === secret;
+  return configuredSecrets.some(
+    (secret) => bearer === secret || headerLegacy === secret || headerSpec === secret,
+  );
 }
