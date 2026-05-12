@@ -22,6 +22,12 @@ const PRESET_MINUTES: Partial<Record<SchedulePreset, number>> = {
   every_4h: 240,
 };
 
+function nextIntervalBoundary(now: Date, minutes: number): Date {
+  const bucketMs = Math.max(1, minutes) * 60_000;
+  const nextMs = Math.floor(now.getTime() / bucketMs) * bucketMs + bucketMs;
+  return new Date(nextMs);
+}
+
 /** Effective cadence in minutes (or null when the preset is anchored to a time of day). */
 export function effectiveFrequencyMinutes(s: Pick<ScheduleSettings, "schedulePreset" | "frequencyMinutes">): number | null {
   const pm = PRESET_MINUTES[s.schedulePreset];
@@ -94,6 +100,14 @@ export function calculateNextRun(
   }
 
   const minutes = effectiveFrequencyMinutes(s) ?? Math.max(1, s.frequencyMinutes);
+
+  // Anchor interval presets to wall-clock boundaries instead of the previous
+  // completion time. This keeps "hourly" aligned with an hourly cron heartbeat
+  // even if a manual run happened at :07 or a prior scheduled run finished late.
+  if (s.schedulePreset !== "custom") {
+    return nextIntervalBoundary(now, minutes);
+  }
+
   const baseline = s.lastRunAt && s.lastRunAt.getTime() > 0 ? s.lastRunAt.getTime() : now.getTime();
   let next = baseline + minutes * 60_000;
   if (next < now.getTime()) next = now.getTime();
