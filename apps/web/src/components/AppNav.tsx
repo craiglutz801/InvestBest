@@ -11,6 +11,7 @@ const links = [
   { href: "/universe", label: "Universe" },
   { href: "/trades", label: "Trades" },
   { href: "/decisions", label: "Decisions" },
+  { href: "/logs", label: "Agent Log" },
   { href: "/settings", label: "Settings" },
 ];
 
