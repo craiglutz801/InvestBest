@@ -19,6 +19,7 @@ import {
   volTargetSizeMultiplier,
 } from "@/lib/portfolio/sizing";
 import { evaluateBuyBlock } from "@/lib/rules/buyRules";
+import { pickRotationTarget } from "@/lib/rules/rotationRules";
 import { evaluateShortBlock, shouldCoverShort } from "@/lib/rules/shortRules";
 import { shouldSell } from "@/lib/rules/sellRules";
 import {
@@ -32,6 +33,19 @@ import { orderUniverseHoldingsFirst, prepareUniverseForFreeTier } from "@/lib/jo
 export type RunAgentTrigger = "hourly" | "manual";
 
 type SymbolRow = Awaited<ReturnType<typeof getTradableSymbols>>[number];
+type RotationHolding = {
+  positionId: string;
+  symbolId: string;
+  ticker: string;
+  segmentKey: string | null;
+  quantity: number;
+  avgCost: number;
+  currentPrice: number;
+  buyScore: number;
+  sellRiskScore: number;
+  confidenceScore: number;
+  breakdown: ScoreBreakdown;
+};
 
 function hourBucketKey(d: Date): string {
   return `${d.toISOString().slice(0, 13)}`;
@@ -905,8 +919,18 @@ async function hourlyMarketAgentPipeline(
     const minDollarVolume = readOptionalNumber(settings, "minDollarVolume") ?? 0;
     const volTargetAnnualized = readOptionalNumber(settings, "volTargetAnnualized") ?? 0;
     const regimeFilterMode = readOptionalString(settings, "regimeFilterMode");
+    const rotationMinBuyScoreEdge = readOptionalNumber(settings, "rotationMinBuyScoreEdge") ?? 8;
+    const rotationWeakHoldMaxBuyScore = readOptionalNumber(settings, "rotationWeakHoldMaxBuyScore") ?? Math.max(buyTh + 5, 55);
+    const rotationMinHeldSellRisk = readOptionalNumber(settings, "rotationMinHeldSellRisk") ?? Math.max(sellRiskTh - 20, 45);
+    const rotationMaxReplacementsPerRun = Math.max(
+      0,
+      Math.floor(readOptionalNumber(settings, "rotationMaxReplacementsPerRun") ?? 1),
+    );
+    const rotationMaxCandidateSellRiskSpread =
+      readOptionalNumber(settings, "rotationMaxCandidateSellRiskSpread") ?? 5;
 
     let cash = cashBeforeRun;
+    const rotationPool: RotationHolding[] = [];
 
     await appendRunProgress(runId, "sells", `Evaluating sells for ${positions.length} holding(s)…`);
 
@@ -1093,6 +1117,19 @@ async function hourlyMarketAgentPipeline(
       });
 
       if (!sellDecision.sell) {
+        rotationPool.push({
+          positionId: pos.id,
+          symbolId: pos.symbolId,
+          ticker: pos.symbol.ticker,
+          segmentKey: pos.symbol.segmentKey ?? null,
+          quantity: qty,
+          avgCost: avg,
+          currentPrice: px,
+          buyScore: scores.buyScore,
+          sellRiskScore: scores.sellRiskScore,
+          confidenceScore: scores.confidenceScore,
+          breakdown: scores.breakdown,
+        });
         mergeExplorer(explorer, pos.symbolId, {
           ticker: pos.symbol.ticker,
           segmentKey: pos.symbol.segmentKey ?? null,
@@ -1340,8 +1377,10 @@ async function hourlyMarketAgentPipeline(
     candidates.sort((a, b) => b.buyScore - a.buyScore);
     const rankedBuyCandidates = candidates.length;
     let buysThisRun = 0;
+    let replacementsThisRun = 0;
     const targetCount = settings.targetHoldings;
     const boughtIds = new Set<string>();
+    const rotatedOutIds = new Set<string>();
     let buyLoopExit: { reason: string; startIdx: number } | null = null;
 
     for (let ri = 0; ri < candidates.length; ri++) {
@@ -1353,9 +1392,113 @@ async function hourlyMarketAgentPipeline(
         break;
       }
       const openCount = await prisma.paperPosition.count({ where: { userId, isOpen: true } });
-      if (openCount + buysThisRun >= targetCount) {
-        buyLoopExit = { reason: "target_holdings_cap", startIdx: ri };
-        break;
+      if (openCount >= targetCount) {
+        if (replacementsThisRun >= rotationMaxReplacementsPerRun) {
+          buyLoopExit = { reason: "target_holdings_cap", startIdx: ri };
+          break;
+        }
+
+        const rotationTarget = pickRotationTarget({
+          candidate: {
+            symbolId: c.symbolId,
+            ticker: c.ticker,
+            segmentKey: c.segmentKey,
+            buyScore: c.buyScore,
+            sellRiskScore: c.sellRiskScore,
+            confidenceScore: c.confidence,
+          },
+          holdings: rotationPool.filter((h) => !rotatedOutIds.has(h.symbolId)),
+          minBuyScoreEdge: rotationMinBuyScoreEdge,
+          weakHoldMaxBuyScore: rotationWeakHoldMaxBuyScore,
+          minHeldSellRisk: rotationMinHeldSellRisk,
+          maxCandidateSellRiskSpread: rotationMaxCandidateSellRiskSpread,
+        });
+
+        if (!rotationTarget) {
+          buyLoopExit = { reason: "target_holdings_cap", startIdx: ri };
+          break;
+        }
+
+        const rotationExec = applySlippage(rotationTarget.currentPrice, "SELL", slippage);
+        const rotationGross = rotationTarget.quantity * rotationExec;
+        const rotationFees = 0;
+        realizedPnlThisRun += rotationTarget.quantity * (rotationExec - rotationTarget.avgCost);
+        const rotationCashBefore = cash;
+        cash = rotationCashBefore + rotationGross - rotationFees;
+
+        const rotationReasonText =
+          `Rotation: replace ${rotationTarget.ticker} with ${c.ticker}. ` +
+          `Held buy ${rotationTarget.buyScore}/sellRisk ${rotationTarget.sellRiskScore}; ` +
+          `candidate buy ${c.buyScore}/sellRisk ${c.sellRiskScore}.`;
+        await prisma.paperTrade.create({
+          data: {
+            userId,
+            symbolId: rotationTarget.symbolId,
+            decisionRunId: runId,
+            action: "SELL",
+            quantity: rotationTarget.quantity,
+            price: rotationExec,
+            slippagePct: slippage,
+            fees: rotationFees,
+            grossAmount: rotationGross,
+            reasonCode: "rebalance",
+            reasonText: rotationReasonText,
+            modelVersion: "rules-v1",
+            confidenceScore: rotationTarget.confidenceScore,
+            cashBefore: rotationCashBefore,
+            cashAfter: cash,
+            expectedHorizon: "5d",
+          },
+        });
+
+        await prisma.paperPosition.update({
+          where: { id: rotationTarget.positionId },
+          data: { isOpen: false, quantity: 0, isShort: false, lastUpdatedAt: new Date() },
+        });
+
+        await prisma.decisionRunItem.deleteMany({
+          where: {
+            decisionRunId: runId,
+            symbolId: rotationTarget.symbolId,
+            actionRecommendation: "hold",
+          },
+        });
+        await prisma.decisionRun.update({
+          where: { id: runId },
+          data: { sellsCount: { increment: 1 } },
+        });
+        await prisma.decisionRunItem.create({
+          data: {
+            decisionRunId: runId,
+            symbolId: rotationTarget.symbolId,
+            actionRecommendation: "sell",
+            blocked: false,
+            buyScore: rotationTarget.buyScore,
+            sellRiskScore: rotationTarget.sellRiskScore,
+            confidenceScore: rotationTarget.confidenceScore,
+            rationaleShort:
+              `${rotationReasonText} ${rotationTarget.breakdown.featureSummary}. ` +
+              `Sell risk: ${rotationTarget.breakdown.sellRiskFactors.join("; ")}`,
+          },
+        });
+        mergeExplorer(explorer, rotationTarget.symbolId, {
+          ticker: rotationTarget.ticker,
+          segmentKey: rotationTarget.segmentKey,
+          status: "rotated_out",
+          buyScore: rotationTarget.buyScore,
+          sellRiskScore: rotationTarget.sellRiskScore,
+          confidenceScore: rotationTarget.confidenceScore,
+          currentPrice: rotationTarget.currentPrice,
+          rejectionReason: "rotation_replaced",
+        });
+        await appendRunProgress(
+          runId,
+          "sell",
+          `ROTATE OUT ${rotationTarget.ticker} × ${rotationTarget.quantity} @ ${rotationExec.toFixed(4)}`,
+          `Replaced by ${c.ticker} (buy ${c.buyScore} vs held ${rotationTarget.buyScore}).`,
+        );
+        rotatedOutIds.add(rotationTarget.symbolId);
+        replacementsThisRun++;
       }
 
       const execPx = applySlippage(c.price, "BUY", slippage);
