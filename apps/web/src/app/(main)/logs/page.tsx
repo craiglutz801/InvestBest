@@ -17,6 +17,7 @@ function delta(v: number | null) {
 export default async function LogsPage() {
   const user = await requireDefaultUser();
   const data = await buildAgentLogPayload(user.id);
+  const mockModeActive = data.summary.mockRuns > 0;
 
   return (
     <div className="space-y-6">
@@ -26,6 +27,16 @@ export default async function LogsPage() {
           Every agent run, with timing, trade counts, cash movement, and portfolio change during that run.
         </p>
       </div>
+
+      {mockModeActive ? (
+        <Card className="border-warning/40 bg-warning/5">
+          <CardContent className="pt-6 text-sm text-warning-foreground">
+            Recent runs are still using mock/synthetic market data. In that mode, buys start slightly negative from
+            slippage and then prices remain effectively flat, so this page cannot tell you whether the strategy would
+            make money in live markets.
+          </CardContent>
+        </Card>
+      ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Card>
@@ -54,11 +65,11 @@ export default async function LogsPage() {
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Net money made</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Net portfolio change</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className={`text-2xl font-semibold tabular-nums ${data.summary.netMoneyMade >= 0 ? "text-success" : "text-danger"}`}>
-              {delta(data.summary.netMoneyMade)}
+            <p className={`text-2xl font-semibold tabular-nums ${data.summary.netPortfolioChange >= 0 ? "text-success" : "text-danger"}`}>
+              {delta(data.summary.netPortfolioChange)}
             </p>
           </CardContent>
         </Card>
@@ -80,7 +91,7 @@ export default async function LogsPage() {
                   <th className="pb-2 pr-3 font-medium text-right">Sells</th>
                   <th className="pb-2 pr-3 font-medium text-right">Cash before</th>
                   <th className="pb-2 pr-3 font-medium text-right">Cash after</th>
-                  <th className="pb-2 pr-3 font-medium text-right">Money made</th>
+                  <th className="pb-2 pr-3 font-medium text-right">Portfolio change</th>
                   <th className="pb-2 font-medium">Details</th>
                 </tr>
               </thead>
@@ -117,9 +128,9 @@ export default async function LogsPage() {
                       <td className="py-2 pr-3 text-right tabular-nums">{money(row.cashBefore)}</td>
                       <td className="py-2 pr-3 text-right tabular-nums">{money(row.cashAfter)}</td>
                       <td className={`py-2 pr-3 text-right tabular-nums ${
-                        (row.moneyMade ?? 0) >= 0 ? "text-success" : "text-danger"
+                        (row.portfolioChange ?? 0) >= 0 ? "text-success" : "text-danger"
                       }`}>
-                        {delta(row.moneyMade)}
+                        {delta(row.portfolioChange)}
                       </td>
                       <td className="py-2">
                         <Link

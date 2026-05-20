@@ -11,6 +11,7 @@ type RunRow = {
   sellsCount: number;
   portfolioValueBefore: { toString(): string } | null;
   portfolioValueAfter: { toString(): string } | null;
+  notesJson: string | null;
 };
 
 type SnapshotRow = {
@@ -49,6 +50,7 @@ export async function buildAgentLogPayload(userId: string) {
         sellsCount: true,
         portfolioValueBefore: true,
         portfolioValueAfter: true,
+        notesJson: true,
       },
     }),
     prisma.portfolioSnapshot.findMany({
@@ -135,6 +137,7 @@ export async function buildAgentLogPayload(userId: string) {
     const before = fmtMoneyValue(run.portfolioValueBefore);
     const after = fmtMoneyValue(run.portfolioValueAfter);
     const cash = cashByRun.get(run.id) ?? { cashBefore: null, cashAfter: null };
+    const isMockDataRun = run.notesJson?.includes("Mock/synthetic data") ?? false;
     return {
       id: run.id,
       startedAt: run.startedAt,
@@ -147,13 +150,15 @@ export async function buildAgentLogPayload(userId: string) {
       cashAfter: cash.cashAfter,
       portfolioValueBefore: before,
       portfolioValueAfter: after,
-      moneyMade: before != null && after != null ? after - before : null,
+      portfolioChange: before != null && after != null ? after - before : null,
+      isMockDataRun,
     };
   });
 
   const completed = rows.filter((row) => row.status === "completed");
-  const netMoneyMade = completed.reduce((sum, row) => sum + (row.moneyMade ?? 0), 0);
+  const netPortfolioChange = completed.reduce((sum, row) => sum + (row.portfolioChange ?? 0), 0);
   const scheduledRuns = rows.filter((row) => row.triggerSource === "scheduled").length;
+  const mockRuns = rows.filter((row) => row.isMockDataRun).length;
 
   return {
     rows,
@@ -161,7 +166,8 @@ export async function buildAgentLogPayload(userId: string) {
       totalRuns: rows.length,
       scheduledRuns,
       completedRuns: completed.length,
-      netMoneyMade,
+      netPortfolioChange,
+      mockRuns,
     },
   };
 }
