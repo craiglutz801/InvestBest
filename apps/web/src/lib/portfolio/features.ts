@@ -96,15 +96,19 @@ export type ScoreBreakdown = {
   featureSummary: string;
 };
 
-/** Rules-based buy/sell scores (Milestone 1). ML replaces later. */
-export function rulesScores(f: FeatureVector): {
+export type StrategyMode = "rules_v1" | "alpha_v1";
+
+export type ScoreResult = {
   buyScore: number;
   sellRiskScore: number;
   confidenceScore: number;
   expectedReturn5d: number;
   expectedDrawdownRisk5d: number;
   breakdown: ScoreBreakdown;
-} {
+};
+
+/** Rules-based buy/sell scores (Milestone 1). ML replaces later. */
+export function rulesScores(f: FeatureVector): ScoreResult {
   const buyFactors: string[] = [];
   const sellRiskFactors: string[] = [];
   const confidenceFactors: string[] = [];
@@ -196,6 +200,144 @@ export function rulesScores(f: FeatureVector): {
     expectedDrawdownRisk5d: Math.min(1, f.vol20),
     breakdown: { buyFactors, sellRiskFactors, confidenceFactors, featureSummary },
   };
+}
+
+/**
+ * Alpha foundation v1:
+ * A more portfolio-manager style ranker that emphasizes trend quality, pullback entry,
+ * risk-adjusted momentum, and punishes stretched / unstable setups more aggressively.
+ */
+export function alphaFoundationScores(f: FeatureVector): ScoreResult {
+  const buyFactors: string[] = [];
+  const sellRiskFactors: string[] = [];
+  const confidenceFactors: string[] = [];
+
+  let buy = 50;
+
+  const trendQuality = Math.max(-0.15, Math.min(0.15, f.ret20d - 0.5 * Math.abs(f.ret5d)));
+  buy += trendQuality * 180;
+  buyFactors.push(
+    `${trendQuality >= 0 ? "+" : ""}${(trendQuality * 180).toFixed(0)} trend quality (20d ${(f.ret20d * 100).toFixed(1)}%, 5d ${(f.ret5d * 100).toFixed(1)}%)`,
+  );
+
+  const pullbackBonus = f.ret20d > 0 && f.distSma20 > -0.03 && f.distSma20 < 0.03 ? 12 : 0;
+  if (pullbackBonus > 0) {
+    buy += pullbackBonus;
+    buyFactors.push(`+12 controlled pullback / early trend re-entry (SMA20 ${(f.distSma20 * 100).toFixed(1)}%)`);
+  } else {
+    buyFactors.push(`+0 no pullback edge (SMA20 ${(f.distSma20 * 100).toFixed(1)}%)`);
+  }
+
+  if (f.distSma20 > 0 && f.distSma50 > 0) {
+    buy += 10;
+    buyFactors.push(`+10 above both trend anchors (SMA20 ${(f.distSma20 * 100).toFixed(1)}%, SMA50 ${(f.distSma50 * 100).toFixed(1)}%)`);
+  } else if (f.distSma20 < 0 && f.distSma50 < 0) {
+    buy -= 12;
+    buyFactors.push(`-12 below both trend anchors (SMA20 ${(f.distSma20 * 100).toFixed(1)}%, SMA50 ${(f.distSma50 * 100).toFixed(1)}%)`);
+  }
+
+  if (f.rsi14 >= 45 && f.rsi14 <= 65) {
+    buy += 10;
+    buyFactors.push(`+10 RSI in accumulation zone (${f.rsi14.toFixed(1)})`);
+  } else if (f.rsi14 > 78) {
+    buy -= 22;
+    buyFactors.push(`-22 RSI stretched (${f.rsi14.toFixed(1)})`);
+  } else if (f.rsi14 < 32) {
+    buy -= 12;
+    buyFactors.push(`-12 RSI weak / falling (${f.rsi14.toFixed(1)})`);
+  }
+
+  if (f.ret5d > 0.02 && f.distSma20 > 0.08) {
+    buy -= 15;
+    buyFactors.push(`-15 too extended after fast move (5d ${(f.ret5d * 100).toFixed(1)}%, SMA20 ${(f.distSma20 * 100).toFixed(1)}%)`);
+  }
+
+  if (f.vol20 > 0.55) {
+    buy -= 20;
+    buyFactors.push(`-20 unstable volatility (${(f.vol20 * 100).toFixed(0)}%)`);
+  } else if (f.vol20 < 0.28) {
+    buy += 8;
+    buyFactors.push(`+8 calmer tape (${(f.vol20 * 100).toFixed(0)}%)`);
+  }
+
+  if (f.volSpike) {
+    buy -= 8;
+    buyFactors.push("-8 unusual volume spike");
+  }
+
+  buy = Math.max(0, Math.min(100, buy));
+
+  let sellRisk = 28;
+  if (f.ret20d < -0.04) {
+    sellRisk += 20;
+    sellRiskFactors.push(`+20 broken 20d trend (${(f.ret20d * 100).toFixed(1)}%)`);
+  }
+  if (f.ret5d < -0.03) {
+    sellRisk += 14;
+    sellRiskFactors.push(`+14 weak 5d tape (${(f.ret5d * 100).toFixed(1)}%)`);
+  }
+  if (f.distSma20 < -0.04) {
+    sellRisk += 18;
+    sellRiskFactors.push(`+18 below SMA20 (${(f.distSma20 * 100).toFixed(1)}%)`);
+  }
+  if (f.rsi14 < 38) {
+    sellRisk += 12;
+    sellRiskFactors.push(`+12 RSI weak (${f.rsi14.toFixed(1)})`);
+  }
+  if (f.rsi14 > 82) {
+    sellRisk += 10;
+    sellRiskFactors.push(`+10 RSI euphoric (${f.rsi14.toFixed(1)})`);
+  }
+  if (f.vol20 > 0.6) {
+    sellRisk += 10;
+    sellRiskFactors.push(`+10 volatility unstable (${(f.vol20 * 100).toFixed(0)}%)`);
+  }
+  if (sellRiskFactors.length === 0) sellRiskFactors.push("No major alpha-risk warnings");
+  sellRisk = Math.max(0, Math.min(100, sellRisk));
+
+  let conf = 38;
+  confidenceFactors.push("Base: 38 (alpha foundation prior)");
+  if (f.vol20 < 0.3) {
+    conf += 18;
+    confidenceFactors.push(`+18 controlled volatility (${(f.vol20 * 100).toFixed(0)}%)`);
+  }
+  if (Math.abs(f.distSma20) < 0.08) {
+    conf += 12;
+    confidenceFactors.push(`+12 not overextended vs SMA20 (${(f.distSma20 * 100).toFixed(1)}%)`);
+  }
+  if (f.ret20d > -0.02) {
+    conf += 10;
+    confidenceFactors.push(`+10 medium-term tape not broken (${(f.ret20d * 100).toFixed(1)}%)`);
+  }
+  if (f.vol20 > 0.55) {
+    conf -= 8;
+    confidenceFactors.push(`-8 noisy volatility (${(f.vol20 * 100).toFixed(0)}%)`);
+  }
+  const confidenceScore = Math.max(0, Math.min(100, Math.round(conf)));
+
+  const expectedReturn5d = 0.45 * f.ret5d + 0.35 * f.ret20d - 0.12 * f.vol20 - 0.08 * Math.max(0, f.distSma20 - 0.06);
+  const expectedDrawdownRisk5d = Math.min(1, Math.max(0, 0.55 * f.vol20 + 0.2 * Math.max(0, -f.ret5d)));
+  const featureSummary = [
+    `RSI ${f.rsi14.toFixed(1)}`,
+    `Vol ${(f.vol20 * 100).toFixed(0)}%`,
+    `5d ${(f.ret5d * 100).toFixed(1)}%`,
+    `20d ${(f.ret20d * 100).toFixed(1)}%`,
+    `SMA20 ${f.distSma20 >= 0 ? "+" : ""}${(f.distSma20 * 100).toFixed(1)}%`,
+    "alpha-v1",
+  ].join(" | ");
+
+  return {
+    buyScore: Math.round(buy),
+    sellRiskScore: Math.round(sellRisk),
+    confidenceScore,
+    expectedReturn5d,
+    expectedDrawdownRisk5d,
+    breakdown: { buyFactors, sellRiskFactors, confidenceFactors, featureSummary },
+  };
+}
+
+export function strategyScores(mode: StrategyMode, f: FeatureVector): ScoreResult {
+  return mode === "alpha_v1" ? alphaFoundationScores(f) : rulesScores(f);
 }
 
 export type BearScoreBreakdown = {

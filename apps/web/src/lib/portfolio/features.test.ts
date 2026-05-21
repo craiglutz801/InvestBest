@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { OhlcvBar } from "@/lib/data-provider/twelveData";
-import { computeFeatures, rulesScores } from "./features";
+import { alphaFoundationScores, computeFeatures, rulesScores, strategyScores } from "./features";
 
 function makeBars(closes: number[], volumes?: number[]): OhlcvBar[] {
   const start = new Date("2024-01-01T00:00:00Z");
@@ -82,5 +82,32 @@ describe("rulesScores", () => {
     const calm = rulesScores(baseFeatures);
     const collapsing = rulesScores({ ...baseFeatures, distSma20: -0.1, ret5d: -0.05 });
     expect(collapsing.sellRiskScore).toBeGreaterThan(calm.sellRiskScore);
+  });
+
+  it("lets alpha mode prefer cleaner trend quality over stretched momentum", () => {
+    const balancedTrend = {
+      ...baseFeatures,
+      ret5d: 0.012,
+      ret20d: 0.08,
+      distSma20: 0.015,
+      distSma50: 0.04,
+      rsi14: 57,
+      vol20: 0.19,
+    };
+    const stretchedTrend = {
+      ...baseFeatures,
+      ret5d: 0.05,
+      ret20d: 0.09,
+      distSma20: 0.11,
+      distSma50: 0.12,
+      rsi14: 82,
+      vol20: 0.42,
+    };
+
+    const balanced = alphaFoundationScores(balancedTrend);
+    const stretched = strategyScores("alpha_v1", stretchedTrend);
+
+    expect(balanced.buyScore).toBeGreaterThan(stretched.buyScore);
+    expect(balanced.expectedDrawdownRisk5d).toBeLessThan(stretched.expectedDrawdownRisk5d);
   });
 });

@@ -125,6 +125,7 @@ async function main() {
       newsEnabled: false,
       shortingEnabled: false,
       defaultSlippagePct: 0.05,
+      strategyMode: "rules_v1",
       buyScoreThreshold: 45,
       sellRiskThreshold: 65,
       cooldownHours: 24,

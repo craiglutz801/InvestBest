@@ -19,6 +19,7 @@ export type SettingsFormValues = {
   newsEnabled: boolean;
   shortingEnabled: boolean;
   defaultSlippagePct: number;
+  strategyMode: "rules_v1" | "alpha_v1";
   buyScoreThreshold: number;
   sellRiskThreshold: number;
   cooldownHours: number;
@@ -103,6 +104,21 @@ export function SettingsForm({ initial }: { initial: SettingsFormValues }) {
         </CardHeader>
         <CardContent>
           <form onSubmit={save} className="grid gap-6 sm:grid-cols-2">
+            <Field
+              label="Strategy mode"
+              hint="Choose between the original rules engine and the newer alpha foundation ranker. Rules is the stable baseline; Alpha foundation is the more portfolio-manager-style ranking model."
+            >
+              <select
+                className={inp}
+                value={v.strategyMode}
+                onChange={(e) =>
+                  setV({ ...v, strategyMode: e.target.value as SettingsFormValues["strategyMode"] })
+                }
+              >
+                <option value="rules_v1">Rules v1</option>
+                <option value="alpha_v1">Alpha foundation v1</option>
+              </select>
+            </Field>
             <Field
               label="Starting cash ($)"
               hint="Notional bankroll when there is no trade history yet (e.g. after reset). Once trades exist, live cash comes from the latest trade balance; this field still sets the baseline for return % and benchmarks."

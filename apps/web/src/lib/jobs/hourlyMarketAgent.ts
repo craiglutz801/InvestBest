@@ -9,7 +9,14 @@ import { fetchDailySeries, fetchQuoteDetail } from "@/lib/data-provider/twelveDa
 import { getTradableSymbols } from "@/lib/server/tradableSymbols";
 import { writeDecisionExplainerSummary } from "@/lib/decision/explainer";
 import type { OhlcvBar } from "@/lib/data-provider/twelveData";
-import { computeFeatures, rulesScores, bearScores, type BearScoreBreakdown, type ScoreBreakdown } from "@/lib/portfolio/features";
+import {
+  computeFeatures,
+  strategyScores,
+  bearScores,
+  type BearScoreBreakdown,
+  type ScoreBreakdown,
+  type StrategyMode,
+} from "@/lib/portfolio/features";
 import { applySlippage, grossNotional, realizedPnlCoverShort, signedExposureMarketValue, toNum, unrealizedPnlPosition, wholeShares } from "@/lib/portfolio/math";
 import { assessMarketRegime, regimeAdjustedMaxNew } from "@/lib/portfolio/marketRegime";
 import {
@@ -701,6 +708,8 @@ async function hourlyMarketAgentPipeline(
   apiKey: string,
 ): Promise<void> {
   const cashBeforeRun = await getCurrentCash(userId, starting);
+  const strategyMode = ((readOptionalString(settings, "strategyMode") ?? "rules_v1") as StrategyMode);
+  const strategyModelVersion = strategyMode === "alpha_v1" ? "alpha-v1" : "rules-v1";
   const positions = await prisma.paperPosition.findMany({
     where: { userId, isOpen: true },
     include: { symbol: true },
@@ -755,7 +764,7 @@ async function hourlyMarketAgentPipeline(
           ret5d: features.ret5d,
           ret20d: features.ret20d,
         });
-        const scores = rulesScores(features);
+        const scores = strategyScores(strategyMode, features);
 
         await prisma.marketSnapshot.create({
           data: {
@@ -789,7 +798,7 @@ async function hourlyMarketAgentPipeline(
             expectedReturn5d: scores.expectedReturn5d,
             expectedDrawdownRisk5d: scores.expectedDrawdownRisk5d,
             confidenceScore: scores.confidenceScore,
-            modelVersion: "rules-v1",
+            modelVersion: strategyModelVersion,
             featureSnapshotId: featRow.id,
           },
         });
@@ -996,7 +1005,7 @@ async function hourlyMarketAgentPipeline(
       const recentLow =
         recentLowCand != null && Number.isFinite(recentLowCand) ? recentLowCand : undefined;
 
-      const scores = rulesScores(feat);
+      const scores = strategyScores(strategyMode, feat);
 
       if (pos.isShort) {
         const coverDecision = shouldCoverShort({
@@ -1058,7 +1067,7 @@ async function hourlyMarketAgentPipeline(
             grossAmount: gross,
             reasonCode: coverDecision.code,
             reasonText: coverReasonText,
-            modelVersion: "rules-v1",
+            modelVersion: strategyModelVersion,
             confidenceScore: scores.confidenceScore,
             cashBefore,
             cashAfter: cash,
@@ -1175,7 +1184,7 @@ async function hourlyMarketAgentPipeline(
           grossAmount: gross,
           reasonCode: sellDecision.code,
           reasonText: sellReasonText,
-          modelVersion: "rules-v1",
+          modelVersion: strategyModelVersion,
           confidenceScore: scores.confidenceScore,
           cashBefore,
           cashAfter: cash,
@@ -1301,7 +1310,7 @@ async function hourlyMarketAgentPipeline(
       }
       const bars = useMock ? mockBars(s.ticker) : await fetchDailySeries(s.dataProviderSymbol ?? s.ticker, apiKey, 120);
       const { features } = computeFeatures(bars);
-      const scores = rulesScores(features);
+      const scores = strategyScores(strategyMode, features);
 
       const cooldownCutoff = new Date(Date.now() - cooldownHrs * 3600000);
       const recentSell = await findRecentSellInCooldownWindow(userId, s.id, cooldownCutoff);
@@ -1443,7 +1452,7 @@ async function hourlyMarketAgentPipeline(
             grossAmount: rotationGross,
             reasonCode: "rebalance",
             reasonText: rotationReasonText,
-            modelVersion: "rules-v1",
+            modelVersion: strategyModelVersion,
             confidenceScore: rotationTarget.confidenceScore,
             cashBefore: rotationCashBefore,
             cashAfter: cash,
@@ -1548,7 +1557,7 @@ async function hourlyMarketAgentPipeline(
           grossAmount: gross,
           reasonCode: "buy_rank",
           reasonText: buyReasonText,
-          modelVersion: "rules-v1",
+          modelVersion: strategyModelVersion,
           confidenceScore: c.confidence,
           cashBefore,
           cashAfter: cash,
@@ -1688,7 +1697,7 @@ async function hourlyMarketAgentPipeline(
 
       const bars = useMock ? mockBars(s.ticker) : await fetchDailySeries(s.dataProviderSymbol ?? s.ticker, apiKey, 120);
       const { features } = computeFeatures(bars);
-      const scores = rulesScores(features);
+      const scores = strategyScores(strategyMode, features);
       const bs = bearScores(features);
 
       const cooldownCutoffShort = new Date(Date.now() - cooldownHrs * 3600000);
@@ -1799,7 +1808,7 @@ async function hourlyMarketAgentPipeline(
           grossAmount: gross,
           reasonCode: "bear_rank",
           reasonText: shortReasonText,
-          modelVersion: "rules-v1",
+          modelVersion: strategyModelVersion,
           confidenceScore: c.confidence,
           cashBefore,
           cashAfter: cash,
@@ -2073,7 +2082,7 @@ async function hourlyMarketAgentPipeline(
         maxShortPositionsPerRun: settings.maxShortPositionsPerRun,
         buyScoreCoverShortThreshold: toNum(settings.buyScoreCoverShortThreshold),
       }),
-      rankingInputsJson: JSON.stringify({ modelVersion: "rules-v1" }),
+      rankingInputsJson: JSON.stringify({ modelVersion: strategyModelVersion, strategyMode }),
       candidateExplorerJson: JSON.stringify({
         note: "Full per-symbol grid: Decisions page + decision_run_item; export planned.",
       }),

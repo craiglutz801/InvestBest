@@ -24,6 +24,7 @@ export async function GET() {
       newsEnabled: s.newsEnabled,
       shortingEnabled: s.shortingEnabled,
       defaultSlippagePct: toNum(s.defaultSlippagePct),
+      strategyMode: s.strategyMode,
       buyScoreThreshold: toNum(s.buyScoreThreshold),
       sellRiskThreshold: toNum(s.sellRiskThreshold),
       cooldownHours: s.cooldownHours,
@@ -67,6 +68,7 @@ export async function PUT(req: Request) {
     if (b.newsEnabled !== undefined) data.newsEnabled = b.newsEnabled;
     if (b.shortingEnabled !== undefined) data.shortingEnabled = b.shortingEnabled;
     if (b.defaultSlippagePct !== undefined) data.defaultSlippagePct = b.defaultSlippagePct;
+    if (b.strategyMode !== undefined) data.strategyMode = b.strategyMode;
     if (b.buyScoreThreshold !== undefined) data.buyScoreThreshold = b.buyScoreThreshold;
     if (b.sellRiskThreshold !== undefined) data.sellRiskThreshold = b.sellRiskThreshold;
     if (b.cooldownHours !== undefined) data.cooldownHours = b.cooldownHours;

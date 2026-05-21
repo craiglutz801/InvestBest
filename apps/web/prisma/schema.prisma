@@ -47,6 +47,7 @@ model AppSettings {
   newsEnabled           Boolean        @default(false)
   shortingEnabled       Boolean        @default(false)
   defaultSlippagePct    Decimal        @default(0.05) @db.Decimal(6, 4)
+  strategyMode         String         @default("rules_v1")
   buyScoreThreshold     Decimal        @default(45) @db.Decimal(6, 2)
   sellRiskThreshold     Decimal        @default(65) @db.Decimal(6, 2)
   cooldownHours         Int            @default(24)
