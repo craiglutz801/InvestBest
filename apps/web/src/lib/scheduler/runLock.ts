@@ -150,9 +150,27 @@ export async function attachRunIdToLock(lockId: string, runId: string): Promise<
  * dashboard would show a phantom "running" forever for a crashed run.
  */
 export async function expireStaleLocks(now: Date = new Date()): Promise<number> {
-  const res = await prisma.agentRunLock.updateMany({
+  const staleLocks = await prisma.agentRunLock.findMany({
     where: { status: "active", expiresAt: { lt: now } },
+    select: { id: true, runId: true },
+  });
+  if (staleLocks.length === 0) return 0;
+
+  await prisma.agentRunLock.updateMany({
+    where: { id: { in: staleLocks.map((lock) => lock.id) } },
     data: { status: "expired", releasedAt: now },
   });
-  return res.count;
+
+  const staleRunIds = staleLocks.map((lock) => lock.runId).filter((runId): runId is string => Boolean(runId));
+  if (staleRunIds.length > 0) {
+    await prisma.decisionRun.updateMany({
+      where: { id: { in: staleRunIds }, status: "running" },
+      data: {
+        status: "failed",
+        finishedAt: now,
+      },
+    });
+  }
+
+  return staleLocks.length;
 }

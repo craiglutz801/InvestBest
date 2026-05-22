@@ -1,4 +1,3 @@
-import { after } from "next/server";
 import { jsonError, jsonOk } from "@/lib/api/http";
 import { triggerAgentRun } from "@/lib/scheduler/triggerAgentRun";
 import { requireDefaultUser } from "@/lib/server/defaultUser";
@@ -31,8 +30,7 @@ export async function POST(req: Request) {
       runMode: body.dryRun ? "dry_run" : "paper_trade",
       strategyVersionId: body.strategyVersionId ?? null,
       searchProfileId: body.searchProfileId ?? null,
-      background: true,
-      scheduleAfter: after,
+      background: false,
       force: Boolean(body.force),
     });
     return jsonOk(outcome);

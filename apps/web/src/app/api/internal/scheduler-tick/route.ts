@@ -1,4 +1,3 @@
-import { after } from "next/server";
 import { jsonError, jsonOk } from "@/lib/api/http";
 import { runSchedulerTick } from "@/lib/jobs/hourlyAgentScheduler";
 import { internalAuthorized } from "@/lib/server/internalAuth";
@@ -24,7 +23,7 @@ export const maxDuration = 300;
  * Auth: same secret rules as the legacy `/api/internal/hourly-run`, see `internalAuthorized`.
  */
 async function handle(_req: NextRequest) {
-  return jsonOk(await runSchedulerTick({ background: true, scheduleAfter: after }));
+  return jsonOk(await runSchedulerTick({ background: false }));
 }
 
 export async function GET(req: NextRequest) {
