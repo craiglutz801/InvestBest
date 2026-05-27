@@ -13,6 +13,7 @@
     "dev:pm2:logs": "pm2 logs investbest-web",
     "build": "next build",
     "start": "next start",
+    "agent:tick": "tsx scripts/run-scheduler-tick.ts",
     "lint": "next lint",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",

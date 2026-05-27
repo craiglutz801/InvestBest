@@ -1,0 +1,26 @@
+services:
+  - type: cron
+    name: investbest-agent-cron
+    runtime: node
+    plan: starter
+    region: oregon
+    rootDir: apps/web
+    buildCommand: npm ci && npm run db:generate
+    startCommand: npm run agent:tick
+    schedule: 0 * * * *
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: TWELVE_DATA_API_KEY
+        sync: false
+      - key: USE_MOCK_MARKET_DATA
+        value: "false"
+      - key: INVESTBEST_MAX_UNIVERSE_SYMBOLS
+        value: "28"
+      - key: DEFAULT_AGENT_RUN_FREQUENCY_MINUTES
+        value: "60"
+      - key: DEFAULT_SCHEDULE_TIMEZONE
+        value: America/Denver

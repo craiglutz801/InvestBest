@@ -9,7 +9,7 @@ Paper-trading web app: hourly agent, curated equity/ETF universe, auditable deci
 | App | `apps/web` — Next.js 15, Prisma, Tailwind, Recharts |
 | DB | PostgreSQL (e.g. local Docker or Neon) |
 | Data | Twelve Data (+ mock mode) |
-| Jobs | Vercel Cron → `/api/internal/hourly-run` (secret-protected); Trigger.dev preferred for production |
+| Jobs | Render Cron recommended for production execution; Vercel remains the UI / reporting layer |
 | ML | `apps/ml-service` — FastAPI stub for `/score/batch` |
 
 Architecture overview: **`docs/ARCHITECTURE.md`**.
@@ -38,9 +38,20 @@ Open **http://localhost:3000** → Dashboard. Use **Settings → Run hourly agen
 - `npm run dev` — dev server
 - **Keep dev server alive across crashes / reboot** — see [`docs/Local_Dev_Server_Persist.md`](docs/Local_Dev_Server_Persist.md) (PM2 + honest note about sleep vs cloud).
 - `npm run build` / `npm start` — production
+- `npm run agent:tick` — run one scheduler tick in-process (best for Render Cron)
 - `npm run db:push` / `npm run db:migrate` — schema
 - `npm run db:seed` — demo user + universe symbols
 - `npm test` — Vitest (portfolio math + rules)
+
+### Production recommendation
+
+Use **Vercel** for the web UI and **Render Cron** for actual agent execution.
+
+- Blueprint file: [`render.yaml`](render.yaml)
+- Render cron runtime command: `npm run agent:tick`
+- Replace the old `curl https://.../api/internal/scheduler-tick` cron job with this direct command-based cron
+- Keep `USE_MOCK_MARKET_DATA=false`
+- Start with `INVESTBEST_MAX_UNIVERSE_SYMBOLS=28` so runs finish reliably
 
 ## Legacy layout
 
