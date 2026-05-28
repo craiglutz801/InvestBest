@@ -24,6 +24,14 @@ export const UNIVERSE_SEGMENTS = {
       "COST", "WMT", "AMD", "NFLX", "BRK.B", "AVGO", "LLY", "GE", "CAT", "CRM",
     ] as const,
   },
+  software_cloud: {
+    name: "Software / cloud leadership",
+    description: "Liquid growth and software leaders that often drive risk-on equity tapes.",
+    tickers: [
+      "SNOW", "PLTR", "CRWD", "PANW", "NOW",
+      "ORCL", "MDB", "DDOG", "NET", "SHOP",
+    ] as const,
+  },
   defense: {
     name: "Defense / aerospace",
     description: "Defense contractors and aerospace / tactical names + sector ETFs.",
@@ -58,6 +66,7 @@ export type SegmentKey = keyof typeof UNIVERSE_SEGMENTS;
 
 const SEGMENT_ORDER: SegmentKey[] = [
   "equities_core",
+  "software_cloud",
   "defense",
   "energy",
   "agriculture",
@@ -88,4 +97,44 @@ export const ALL_DEFAULT_TICKERS = allSegmentTickers();
 export function assetTypeForTicker(ticker: string): "equity" | "etf" | "commodity_proxy" {
   if (ETF_TICKERS.has(ticker)) return "etf";
   return "equity";
+}
+
+export const DEFENSIVE_MACRO_TICKERS = new Set<string>(["IEF", "TLT", "SHY", "TIP", "UUP"]);
+
+export const LEADERSHIP_GROWTH_TICKERS = new Set<string>([
+  "NVDA", "MSFT", "AAPL", "AMZN", "META", "GOOGL", "AVGO", "AMD", "TSLA", "NFLX",
+  "SNOW", "PLTR", "CRWD", "PANW", "NOW", "ORCL", "MDB", "DDOG", "NET", "SHOP",
+]);
+
+const SEGMENT_SCAN_PRIORITY: Record<SegmentKey, number> = {
+  software_cloud: 0,
+  equities_core: 1,
+  defense: 2,
+  energy: 3,
+  metals: 4,
+  agriculture: 5,
+  macro: 6,
+};
+
+export function isDefensiveMacroTicker(ticker: string): boolean {
+  return DEFENSIVE_MACRO_TICKERS.has(ticker);
+}
+
+export function isLeadershipGrowthTicker(ticker: string): boolean {
+  return LEADERSHIP_GROWTH_TICKERS.has(ticker);
+}
+
+/**
+ * Lower number = scan earlier under capped API budgets.
+ * Leadership and software/cloud names get pulled forward so they are not
+ * invisible when the universe is truncated for cost / rate-limit reasons.
+ */
+export function scanPriorityForTicker(ticker: string, segmentKey: string | null): number {
+  let score = 100;
+  if (isLeadershipGrowthTicker(ticker)) score -= 50;
+  if (isDefensiveMacroTicker(ticker)) score += 20;
+  if (segmentKey && segmentKey in SEGMENT_SCAN_PRIORITY) {
+    score += SEGMENT_SCAN_PRIORITY[segmentKey as SegmentKey] * 10;
+  }
+  return score;
 }

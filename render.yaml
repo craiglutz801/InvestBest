@@ -5,7 +5,7 @@ services:
     plan: starter
     region: oregon
     rootDir: apps/web
-    buildCommand: npm ci && npm run db:generate
+    buildCommand: npm ci && npm run db:generate && npm run db:seed
     startCommand: npm run agent:tick
     schedule: 0 * * * *
     autoDeployTrigger: commit

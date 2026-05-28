@@ -9,7 +9,8 @@ export type BuyBlockReason =
   | "extended_from_mean"
   | "cooldown"
   | "liquidity"
-  | "momentum_requirement";
+  | "momentum_requirement"
+  | "regime_segment";
 
 export function evaluateBuyBlock(input: {
   cash: number;

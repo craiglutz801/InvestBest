@@ -1,4 +1,5 @@
 import type { getTradableSymbols } from "@/lib/server/tradableSymbols";
+import { scanPriorityForTicker } from "@/lib/constants/universe";
 
 export type TradableSymbolRow = Awaited<ReturnType<typeof getTradableSymbols>>[number];
 
@@ -7,8 +8,16 @@ export function orderUniverseHoldingsFirst(
   all: TradableSymbolRow[],
   heldSymbolIds: Set<string>,
 ): TradableSymbolRow[] {
-  const held = all.filter((s) => heldSymbolIds.has(s.id)).sort((a, b) => a.ticker.localeCompare(b.ticker));
-  const rest = all.filter((s) => !heldSymbolIds.has(s.id)).sort((a, b) => a.ticker.localeCompare(b.ticker));
+  const held = all
+    .filter((s) => heldSymbolIds.has(s.id))
+    .sort((a, b) => a.ticker.localeCompare(b.ticker));
+  const rest = all
+    .filter((s) => !heldSymbolIds.has(s.id))
+    .sort((a, b) => {
+      const prio = scanPriorityForTicker(a.ticker, a.segmentKey ?? null) - scanPriorityForTicker(b.ticker, b.segmentKey ?? null);
+      if (prio !== 0) return prio;
+      return a.ticker.localeCompare(b.ticker);
+    });
   return [...held, ...rest];
 }
 

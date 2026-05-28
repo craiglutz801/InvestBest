@@ -29,6 +29,7 @@ import { evaluateBuyBlock } from "@/lib/rules/buyRules";
 import { pickRotationTarget } from "@/lib/rules/rotationRules";
 import { evaluateShortBlock, shouldCoverShort } from "@/lib/rules/shortRules";
 import { shouldSell } from "@/lib/rules/sellRules";
+import { applyLongUniversePolicy } from "@/lib/rules/universePolicy";
 import {
   appendHoldingsReview,
   appendRunProgress,
@@ -1285,6 +1286,7 @@ async function hourlyMarketAgentPipeline(
       price: number;
       vol20: number;
       breakdown: ScoreBreakdown;
+      policyNote: string | null;
     }[] = [];
     let skippedBuy = 0;
 
@@ -1311,6 +1313,12 @@ async function hourlyMarketAgentPipeline(
       const bars = useMock ? mockBars(s.ticker) : await fetchDailySeries(s.dataProviderSymbol ?? s.ticker, apiKey, 120);
       const { features } = computeFeatures(bars);
       const scores = strategyScores(strategyMode, features);
+      const universePolicy = applyLongUniversePolicy({
+        ticker: s.ticker,
+        segmentKey: s.segmentKey ?? null,
+        regime: regime.regime,
+        buyScore: scores.buyScore,
+      });
 
       const cooldownCutoff = new Date(Date.now() - cooldownHrs * 3600000);
       const recentSell = await findRecentSellInCooldownWindow(userId, s.id, cooldownCutoff);
@@ -1318,13 +1326,39 @@ async function hourlyMarketAgentPipeline(
       const avgDollarVolume = computeAvgDollarVolume(bars, 20);
 
       const avail = cash - (portVal * reservePct) / 100;
+      if (universePolicy.blocked) {
+        skippedBuy++;
+        mergeExplorer(explorer, s.id, {
+          ticker: s.ticker,
+          segmentKey: s.segmentKey ?? null,
+          status: "skipped_buy",
+          buyScore: universePolicy.adjustedBuyScore,
+          sellRiskScore: scores.sellRiskScore,
+          confidenceScore: scores.confidenceScore,
+          rejectionReason: universePolicy.blockedReason,
+        });
+        await prisma.decisionRunItem.create({
+          data: {
+            decisionRunId: runId,
+            symbolId: s.id,
+            actionRecommendation: "skip",
+            blocked: true,
+            blockedReason: universePolicy.blockedReason,
+            buyScore: universePolicy.adjustedBuyScore,
+            sellRiskScore: scores.sellRiskScore,
+            confidenceScore: scores.confidenceScore,
+            rationaleShort: `${universePolicy.note ?? "Blocked by universe policy"}. ${scores.breakdown.featureSummary}`,
+          },
+        });
+        continue;
+      }
       const block = evaluateBuyBlock({
         cash,
         portfolioValue: portVal,
         availableForTrade: avail,
         cashReservePct: reservePct,
         minConfidence: minConf + confidenceMarginForBuy,
-        buyScore: scores.buyScore,
+        buyScore: universePolicy.adjustedBuyScore,
         buyScoreThreshold: buyTh + buyScoreMargin,
         confidenceScore: scores.confidenceScore,
         alreadyHeld: false,
@@ -1343,7 +1377,7 @@ async function hourlyMarketAgentPipeline(
           ticker: s.ticker,
           segmentKey: s.segmentKey ?? null,
           status: "skipped_buy",
-          buyScore: scores.buyScore,
+          buyScore: universePolicy.adjustedBuyScore,
           sellRiskScore: scores.sellRiskScore,
           confidenceScore: scores.confidenceScore,
           rejectionReason: block.reason,
@@ -1355,10 +1389,10 @@ async function hourlyMarketAgentPipeline(
             actionRecommendation: "skip",
             blocked: true,
             blockedReason: block.reason,
-            buyScore: scores.buyScore,
+            buyScore: universePolicy.adjustedBuyScore,
             sellRiskScore: scores.sellRiskScore,
             confidenceScore: scores.confidenceScore,
-            rationaleShort: `${block.detail}. ${scores.breakdown.featureSummary}`,
+            rationaleShort: `${block.detail}. ${scores.breakdown.featureSummary}${universePolicy.note ? ` | Policy: ${universePolicy.note}` : ""}`,
           },
         });
         continue;
@@ -1368,12 +1402,13 @@ async function hourlyMarketAgentPipeline(
         symbolId: s.id,
         ticker: s.ticker,
         segmentKey: s.segmentKey ?? null,
-        buyScore: scores.buyScore,
+        buyScore: universePolicy.adjustedBuyScore,
         sellRiskScore: scores.sellRiskScore,
         confidence: scores.confidenceScore,
         price: px,
         vol20: features.vol20,
         breakdown: scores.breakdown,
+        policyNote: universePolicy.note,
       });
     }
 
@@ -1543,7 +1578,7 @@ async function hourlyMarketAgentPipeline(
       const cashBefore = cash;
       cash = cashBefore - gross - fees;
 
-      const buyReasonText = `Buy score ${c.buyScore}/100 (conf ${c.confidence}). ${c.breakdown.featureSummary}. Factors: ${c.breakdown.buyFactors.join("; ")}`;
+      const buyReasonText = `Buy score ${c.buyScore}/100 (conf ${c.confidence}). ${c.breakdown.featureSummary}. Factors: ${c.breakdown.buyFactors.join("; ")}${c.policyNote ? `. Policy: ${c.policyNote}` : ""}`;
       await prisma.paperTrade.create({
         data: {
           userId,
@@ -1616,7 +1651,7 @@ async function hourlyMarketAgentPipeline(
         data: { buysCount: { increment: 1 } },
       });
 
-      const buyRationale = `${c.breakdown.featureSummary}. Buy: ${c.breakdown.buyFactors.join("; ")}. Conf: ${c.breakdown.confidenceFactors.join("; ")}`;
+      const buyRationale = `${c.breakdown.featureSummary}. Buy: ${c.breakdown.buyFactors.join("; ")}. Conf: ${c.breakdown.confidenceFactors.join("; ")}${c.policyNote ? `. Policy: ${c.policyNote}` : ""}`;
       await prisma.decisionRunItem.create({
         data: {
           decisionRunId: runId,
@@ -1634,7 +1669,7 @@ async function hourlyMarketAgentPipeline(
         runId,
         "buy",
         `BUY ${c.ticker} × ${qty} @ ${execPx.toFixed(4)} — score ${c.buyScore}, conf ${c.confidence}`,
-        `${c.breakdown.featureSummary} | ${c.breakdown.buyFactors.filter(f => !f.startsWith("+0")).join("; ")}`,
+        `${c.breakdown.featureSummary} | ${c.breakdown.buyFactors.filter(f => !f.startsWith("+0")).join("; ")}${c.policyNote ? ` | ${c.policyNote}` : ""}`,
       );
     }
 
