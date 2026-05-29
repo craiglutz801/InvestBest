@@ -252,6 +252,11 @@ export function alphaFoundationScores(f: FeatureVector): ScoreResult {
     buyFactors.push(`-15 too extended after fast move (5d ${(f.ret5d * 100).toFixed(1)}%, SMA20 ${(f.distSma20 * 100).toFixed(1)}%)`);
   }
 
+  if (f.ret20d > 0.08 && f.ret5d > 0 && f.distSma20 > -0.01 && f.distSma20 < 0.12) {
+    buy += 8;
+    buyFactors.push(`+8 momentum follow-through without blow-off extension (20d ${(f.ret20d * 100).toFixed(1)}%, SMA20 ${(f.distSma20 * 100).toFixed(1)}%)`);
+  }
+
   if (f.vol20 > 0.55) {
     buy -= 20;
     buyFactors.push(`-20 unstable volatility (${(f.vol20 * 100).toFixed(0)}%)`);

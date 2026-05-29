@@ -25,4 +25,17 @@ describe("applyLongUniversePolicy", () => {
     expect(result.blocked).toBe(false);
     expect(result.adjustedBuyScore).toBeGreaterThan(74);
   });
+
+  it("penalizes commodity proxy segments in bullish regimes", () => {
+    const result = applyLongUniversePolicy({
+      ticker: "CPER",
+      segmentKey: "metals",
+      regime: "bullish",
+      buyScore: 90,
+    });
+
+    expect(result.blocked).toBe(false);
+    expect(result.adjustedBuyScore).toBeLessThan(90);
+    expect(result.note).toContain("Commodity proxy penalty");
+  });
 });

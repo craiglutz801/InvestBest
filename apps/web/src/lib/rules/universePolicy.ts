@@ -1,4 +1,5 @@
 import {
+  isCommodityProxySegmentKey,
   isDefensiveMacroTicker,
   isLeadershipGrowthTicker,
 } from "@/lib/constants/universe";
@@ -51,15 +52,28 @@ export function applyLongUniversePolicy(input: {
     }
   }
 
+  if (isCommodityProxySegmentKey(segmentKey)) {
+    if (regime === "bullish") {
+      adjusted -= 22;
+      notes.push("Commodity proxy penalty in bullish equity regime");
+    } else if (regime === "neutral") {
+      adjusted -= 10;
+      notes.push("Commodity proxy penalty in neutral regime");
+    } else {
+      adjusted += 4;
+      notes.push("Commodity proxy hedge tailwind in bearish regime");
+    }
+  }
+
   const softwareCloud = segmentKey === "software_cloud";
   const leadershipGrowth = isLeadershipGrowthTicker(ticker);
 
   if (softwareCloud) {
     if (regime === "bullish") {
-      adjusted += 8;
+      adjusted += 12;
       notes.push("Software/cloud leadership bonus in bullish regime");
     } else if (regime === "neutral") {
-      adjusted += 4;
+      adjusted += 6;
       notes.push("Software/cloud bonus in neutral regime");
     } else {
       adjusted -= 8;
@@ -67,10 +81,10 @@ export function applyLongUniversePolicy(input: {
     }
   } else if (leadershipGrowth) {
     if (regime === "bullish") {
-      adjusted += 6;
+      adjusted += 8;
       notes.push("Leadership growth bonus in bullish regime");
     } else if (regime === "neutral") {
-      adjusted += 3;
+      adjusted += 4;
       notes.push("Leadership growth bonus in neutral regime");
     } else {
       adjusted -= 6;

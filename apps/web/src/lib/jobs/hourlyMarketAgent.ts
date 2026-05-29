@@ -1237,7 +1237,8 @@ async function hourlyMarketAgentPipeline(
     // Market regime check (soft buy throttle). SPY bars are also reused for benchmark later.
     let spyBars: OhlcvBar[];
     try {
-      spyBars = useMock ? mockBars("SPY") : await fetchDailySeries("SPY", apiKey, 120);
+      // Pull enough benchmark history to compute SMA200 reliably.
+      spyBars = useMock ? mockBars("SPY") : await fetchDailySeries("SPY", apiKey, 260);
     } catch {
       spyBars = mockBars("SPY");
     }

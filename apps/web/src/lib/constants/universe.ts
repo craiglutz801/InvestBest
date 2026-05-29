@@ -124,6 +124,10 @@ export function isLeadershipGrowthTicker(ticker: string): boolean {
   return LEADERSHIP_GROWTH_TICKERS.has(ticker);
 }
 
+export function isCommodityProxySegmentKey(segmentKey: string | null): boolean {
+  return segmentKey === "agriculture" || segmentKey === "metals";
+}
+
 /**
  * Lower number = scan earlier under capped API budgets.
  * Leadership and software/cloud names get pulled forward so they are not

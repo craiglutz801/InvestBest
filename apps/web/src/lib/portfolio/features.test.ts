@@ -110,4 +110,27 @@ describe("rulesScores", () => {
     expect(balanced.buyScore).toBeGreaterThan(stretched.buyScore);
     expect(balanced.expectedDrawdownRisk5d).toBeLessThan(stretched.expectedDrawdownRisk5d);
   });
+
+  it("rewards steady momentum follow-through that is not yet blow-off extended", () => {
+    const steadyLeader = alphaFoundationScores({
+      ...baseFeatures,
+      ret5d: 0.018,
+      ret20d: 0.12,
+      distSma20: 0.035,
+      distSma50: 0.08,
+      rsi14: 61,
+      vol20: 0.24,
+    });
+    const stalledName = alphaFoundationScores({
+      ...baseFeatures,
+      ret5d: -0.005,
+      ret20d: 0.04,
+      distSma20: -0.01,
+      distSma50: 0.01,
+      rsi14: 48,
+      vol20: 0.24,
+    });
+
+    expect(steadyLeader.buyScore).toBeGreaterThan(stalledName.buyScore);
+  });
 });
