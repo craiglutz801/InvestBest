@@ -1,4 +1,5 @@
 import type { OhlcvBar } from "@/lib/data-provider/twelveData";
+import { predictRegressionV1 } from "@/lib/research/regressionV1";
 
 export type FeatureVector = {
   ret1d: number;
@@ -96,7 +97,7 @@ export type ScoreBreakdown = {
   featureSummary: string;
 };
 
-export type StrategyMode = "rules_v1" | "alpha_v1";
+export type StrategyMode = "rules_v1" | "alpha_v1" | "regression_v1";
 
 export type ScoreResult = {
   buyScore: number;
@@ -341,8 +342,90 @@ export function alphaFoundationScores(f: FeatureVector): ScoreResult {
   };
 }
 
+export function regressionBaselineScores(f: FeatureVector): ScoreResult {
+  const prediction = predictRegressionV1(f);
+  const buyFactors = [...prediction.driverLines];
+  const sellRiskFactors = [
+    `Regression downside prior ${(prediction.downsideProbability5d * 100).toFixed(1)}% over next 5 bars`,
+  ];
+  const confidenceFactors: string[] = ["Base: 42 (regression baseline prior)"];
+
+  let buy = 50 + prediction.expectedReturn5d * 1400 - prediction.downsideProbability5d * 28;
+  if (f.vol20 < 0.3) {
+    buy += 8;
+    confidenceFactors.push(`+12 controlled volatility (${(f.vol20 * 100).toFixed(0)}%)`);
+  }
+  if (Math.abs(f.distSma20) < 0.1) {
+    buy += 5;
+    confidenceFactors.push(`+10 not wildly extended vs SMA20 (${(f.distSma20 * 100).toFixed(1)}%)`);
+  }
+  if (f.rsi14 > 82) {
+    buy -= 10;
+    buyFactors.push(`-10 euphoric RSI penalty (${f.rsi14.toFixed(1)})`);
+  }
+  if (f.volSpike) {
+    buy -= 6;
+    buyFactors.push("-6 unusual volume spike");
+  }
+
+  let sellRisk = 18 + prediction.downsideProbability5d * 78;
+  if (f.ret20d < -0.03) {
+    sellRisk += 12;
+    sellRiskFactors.push(`+12 broken 20d trend (${(f.ret20d * 100).toFixed(1)}%)`);
+  }
+  if (f.distSma20 < -0.04) {
+    sellRisk += 10;
+    sellRiskFactors.push(`+10 below SMA20 (${(f.distSma20 * 100).toFixed(1)}%)`);
+  }
+  if (f.rsi14 > 84) {
+    sellRisk += 8;
+    sellRiskFactors.push(`+8 RSI stretched (${f.rsi14.toFixed(1)})`);
+  }
+
+  let conf = 42;
+  if (f.vol20 < 0.35) conf += 14;
+  else confidenceFactors.push(`+0 elevated volatility (${(f.vol20 * 100).toFixed(0)}%)`);
+  if (prediction.expectedReturn5d > 0) {
+    conf += 8;
+    confidenceFactors.push(`+8 positive regression edge (${(prediction.expectedReturn5d * 100).toFixed(2)}%)`);
+  }
+  if (prediction.downsideProbability5d > 0.45) {
+    conf -= 10;
+    confidenceFactors.push(`-10 downside prior elevated (${(prediction.downsideProbability5d * 100).toFixed(1)}%)`);
+  }
+
+  buy = clamp100(buy);
+  sellRisk = clamp100(sellRisk);
+  conf = clamp100(conf);
+
+  const featureSummary = [
+    `RSI ${f.rsi14.toFixed(1)}`,
+    `Vol ${(f.vol20 * 100).toFixed(0)}%`,
+    `5d ${(f.ret5d * 100).toFixed(1)}%`,
+    `20d ${(f.ret20d * 100).toFixed(1)}%`,
+    `E[r+5d] ${(prediction.expectedReturn5d * 100).toFixed(2)}%`,
+    `Downside ${(prediction.downsideProbability5d * 100).toFixed(1)}%`,
+    "regression-v1",
+  ].join(" | ");
+
+  return {
+    buyScore: Math.round(buy),
+    sellRiskScore: Math.round(sellRisk),
+    confidenceScore: Math.round(conf),
+    expectedReturn5d: prediction.expectedReturn5d,
+    expectedDrawdownRisk5d: prediction.downsideProbability5d,
+    breakdown: { buyFactors, sellRiskFactors, confidenceFactors, featureSummary },
+  };
+}
+
+function clamp100(n: number): number {
+  return Math.max(0, Math.min(100, n));
+}
+
 export function strategyScores(mode: StrategyMode, f: FeatureVector): ScoreResult {
-  return mode === "alpha_v1" ? alphaFoundationScores(f) : rulesScores(f);
+  if (mode === "alpha_v1") return alphaFoundationScores(f);
+  if (mode === "regression_v1") return regressionBaselineScores(f);
+  return rulesScores(f);
 }
 
 export type BearScoreBreakdown = {

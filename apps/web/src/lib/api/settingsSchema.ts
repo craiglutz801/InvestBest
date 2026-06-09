@@ -15,7 +15,7 @@ export const settingsUpdateSchema = z.object({
   newsEnabled: z.boolean().optional(),
   shortingEnabled: z.boolean().optional(),
   defaultSlippagePct: z.number().min(0).max(1).optional(),
-  strategyMode: z.enum(["rules_v1", "alpha_v1"]).optional(),
+  strategyMode: z.enum(["rules_v1", "alpha_v1", "regression_v1"]).optional(),
   buyScoreThreshold: z.number().min(0).max(100).optional(),
   sellRiskThreshold: z.number().min(0).max(100).optional(),
   cooldownHours: z.number().int().min(0).max(168).optional(),

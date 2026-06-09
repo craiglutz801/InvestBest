@@ -30,7 +30,7 @@ export default async function SettingsPage() {
     newsEnabled: s.newsEnabled,
     shortingEnabled: s.shortingEnabled,
     defaultSlippagePct: toNum(s.defaultSlippagePct),
-    strategyMode: (s.strategyMode as "rules_v1" | "alpha_v1") ?? "rules_v1",
+    strategyMode: (s.strategyMode as "rules_v1" | "alpha_v1" | "regression_v1") ?? "rules_v1",
     buyScoreThreshold: toNum(s.buyScoreThreshold),
     sellRiskThreshold: toNum(s.sellRiskThreshold),
     cooldownHours: s.cooldownHours,

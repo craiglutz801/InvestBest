@@ -710,7 +710,12 @@ async function hourlyMarketAgentPipeline(
 ): Promise<void> {
   const cashBeforeRun = await getCurrentCash(userId, starting);
   const strategyMode = ((readOptionalString(settings, "strategyMode") ?? "rules_v1") as StrategyMode);
-  const strategyModelVersion = strategyMode === "alpha_v1" ? "alpha-v1" : "rules-v1";
+  const strategyModelVersion =
+    strategyMode === "alpha_v1"
+      ? "alpha-v1"
+      : strategyMode === "regression_v1"
+        ? "regression-v1"
+        : "rules-v1";
   const positions = await prisma.paperPosition.findMany({
     where: { userId, isOpen: true },
     include: { symbol: true },

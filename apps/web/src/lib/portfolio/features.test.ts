@@ -133,4 +133,31 @@ describe("rulesScores", () => {
 
     expect(steadyLeader.buyScore).toBeGreaterThan(stalledName.buyScore);
   });
+
+  it("supports regression_v1 as an additive V2 scoring lane", () => {
+    const strongTrend = strategyScores("regression_v1", {
+      ...baseFeatures,
+      ret5d: 0.025,
+      ret20d: 0.11,
+      distSma20: 0.03,
+      distSma50: 0.07,
+      rsi14: 60,
+      vol20: 0.22,
+      volSpike: false,
+    });
+    const brokenTrend = strategyScores("regression_v1", {
+      ...baseFeatures,
+      ret5d: -0.03,
+      ret20d: -0.08,
+      distSma20: -0.06,
+      distSma50: -0.09,
+      rsi14: 37,
+      vol20: 0.5,
+      volSpike: true,
+    });
+
+    expect(strongTrend.buyScore).toBeGreaterThan(brokenTrend.buyScore);
+    expect(strongTrend.sellRiskScore).toBeLessThan(brokenTrend.sellRiskScore);
+    expect(strongTrend.breakdown.featureSummary).toContain("regression-v1");
+  });
 });

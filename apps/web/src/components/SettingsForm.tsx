@@ -19,7 +19,7 @@ export type SettingsFormValues = {
   newsEnabled: boolean;
   shortingEnabled: boolean;
   defaultSlippagePct: number;
-  strategyMode: "rules_v1" | "alpha_v1";
+  strategyMode: "rules_v1" | "alpha_v1" | "regression_v1";
   buyScoreThreshold: number;
   sellRiskThreshold: number;
   cooldownHours: number;
@@ -97,16 +97,16 @@ export function SettingsForm({ initial }: { initial: SettingsFormValues }) {
         <CardHeader>
           <CardTitle className="text-base">Paper trading</CardTitle>
           <p className="text-sm leading-relaxed text-muted-foreground">
-            These values drive the rules-based hourly agent (manual &quot;Run agent now&quot; and scheduled runs).
-            Buys rank candidates by a 0–100 buy score; sells use stop/take-profit, a sell-risk score, and a momentum
-            check. Numbers are saved to your account and applied on the next run.
+            These values drive the hourly paper-trading agent (manual &quot;Run agent now&quot; and scheduled runs).
+            V1 engines stay available, and V2 can be introduced incrementally through new strategy modes without
+            disturbing the existing paper workflow.
           </p>
         </CardHeader>
         <CardContent>
           <form onSubmit={save} className="grid gap-6 sm:grid-cols-2">
             <Field
               label="Strategy mode"
-              hint="Choose between the original rules engine and the newer alpha foundation ranker. Rules is the stable baseline; Alpha foundation is the more portfolio-manager-style ranking model."
+              hint="Choose between the original rules engine, the alpha foundation ranker, and the new InvestBest v2 regression baseline. Regression v1 is the experimental supervised-model lane and is intended to coexist with V1 while we train and validate it."
             >
               <select
                 className={inp}
@@ -117,6 +117,7 @@ export function SettingsForm({ initial }: { initial: SettingsFormValues }) {
               >
                 <option value="rules_v1">Rules v1</option>
                 <option value="alpha_v1">Alpha foundation v1</option>
+                <option value="regression_v1">Regression v1 (InvestBest v2)</option>
               </select>
             </Field>
             <Field
