@@ -12,6 +12,8 @@
   --danger: #8c2f2f;
   --danger-soft: #f4d6d6;
   --shadow: 0 20px 60px rgba(51, 36, 17, 0.08);
+  --font-body: "Avenir Next", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-display: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
 }
 
 * {
@@ -26,7 +28,7 @@ body {
     radial-gradient(circle at top left, rgba(31, 93, 80, 0.08), transparent 24rem),
     linear-gradient(180deg, #f6f1e7 0%, var(--bg) 100%);
   color: var(--text);
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-body);
 }
 
 a {
@@ -72,6 +74,7 @@ a {
 .brand-name {
   font-size: 1rem;
   font-weight: 700;
+  font-family: var(--font-display);
 }
 
 .eyebrow {
@@ -126,8 +129,12 @@ a {
 
 .page-header h1 {
   margin: 0.35rem 0 0.35rem;
-  font-size: clamp(2rem, 4vw, 3.5rem);
-  line-height: 0.95;
+  font-family: var(--font-display);
+  font-size: clamp(2rem, 4vw, 3.3rem);
+  line-height: 0.96;
+  letter-spacing: -0.04em;
+  max-width: 12ch;
+  text-wrap: balance;
 }
 
 .subtitle {
@@ -159,16 +166,22 @@ a {
   gap: 1rem;
 }
 
+.grid > *,
+.hero > *,
+.page-header > * {
+  min-width: 0;
+}
+
 .grid.metrics {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
 }
 
 .grid.two {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr));
 }
 
 .grid.three {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
 }
 
 .card {
@@ -176,10 +189,16 @@ a {
   border: 1px solid var(--line);
   border-radius: 1.4rem;
   box-shadow: var(--shadow);
+  overflow: hidden;
+  min-width: 0;
 }
 
 .metric-card {
   padding: 1.2rem;
+  min-height: 8.8rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
 }
 
 .card-label {
@@ -189,13 +208,24 @@ a {
 }
 
 .metric-value {
-  font-size: 1.8rem;
+  font-family: var(--font-display);
+  font-size: clamp(1.5rem, 2.6vw, 2.7rem);
   font-weight: 700;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.04em;
+  line-height: 0.94;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 100%;
+  white-space: normal;
+}
+
+.metric-value.compact {
+  font-size: clamp(1.25rem, 2.1vw, 2.05rem);
+  line-height: 0.98;
 }
 
 .metric-change {
-  margin: 0.35rem 0 0;
+  margin: 0.5rem 0 0;
   font-size: 0.9rem;
 }
 
@@ -217,7 +247,10 @@ a {
 
 .section-head h2 {
   margin: 0;
-  font-size: 1.2rem;
+  font-family: var(--font-display);
+  font-size: clamp(1.25rem, 2vw, 1.9rem);
+  line-height: 1;
+  letter-spacing: -0.03em;
 }
 
 .section-head p {
@@ -229,6 +262,15 @@ a {
 .table {
   width: 100%;
   border-collapse: collapse;
+  min-width: 38rem;
+}
+
+.table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 0.15rem;
+  scrollbar-width: thin;
 }
 
 .table th,
@@ -237,6 +279,7 @@ a {
   border-top: 1px solid var(--line);
   text-align: left;
   vertical-align: top;
+  overflow-wrap: anywhere;
 }
 
 .table th {
@@ -295,6 +338,7 @@ a {
   background: rgba(255, 255, 255, 0.5);
   color: var(--muted);
   line-height: 1.55;
+  height: 100%;
 }
 
 .hero {
@@ -310,7 +354,12 @@ a {
 
 .hero-panel h2 {
   margin: 0 0 0.5rem;
-  font-size: 1.45rem;
+  font-family: var(--font-display);
+  font-size: clamp(1.6rem, 2vw, 2.35rem);
+  line-height: 0.98;
+  letter-spacing: -0.04em;
+  max-width: 14ch;
+  text-wrap: balance;
 }
 
 .hero-panel p {
@@ -325,6 +374,61 @@ a {
   display: grid;
   gap: 0.65rem;
   color: var(--text);
+}
+
+.strong {
+  font-family: var(--font-display);
+}
+
+.controls {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.button {
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  padding: 0.95rem 1.2rem;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 120ms ease, opacity 120ms ease, background 120ms ease;
+}
+
+.button:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.button-primary {
+  background: linear-gradient(135deg, var(--accent), #164238);
+  color: white;
+}
+
+.button-secondary {
+  background: rgba(255, 255, 255, 0.84);
+  color: var(--text);
+  border: 1px solid var(--line);
+}
+
+.control-help,
+.control-message {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.positive-text {
+  color: var(--accent);
+}
+
+.negative-text {
+  color: var(--danger);
 }
 
 @media (max-width: 1080px) {
@@ -348,5 +452,9 @@ a {
 
   .page-header {
     flex-direction: column;
+  }
+
+  .content {
+    padding: 1.3rem;
   }
 }

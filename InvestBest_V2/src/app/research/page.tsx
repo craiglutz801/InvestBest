@@ -38,37 +38,39 @@ export default function ResearchPage() {
         title="Recommended build sequence"
         description="This is the order that makes V2 genuinely stronger rather than just more complicated."
       >
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Phase</th>
-              <th>Goal</th>
-              <th>Why it matters</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>1</td>
-              <td>Dataset + training rows</td>
-              <td>Without a proper dataset, regression and factor ideas are still storytelling.</td>
-            </tr>
-            <tr>
-              <td>2</td>
-              <td>Walk-forward engine</td>
-              <td>Lets us measure whether a signal survives outside the exact period it was fitted on.</td>
-            </tr>
-            <tr>
-              <td>3</td>
-              <td>Model registry and promotion gates</td>
-              <td>Stops accidental replacement of the active engine with a prettier but weaker challenger.</td>
-            </tr>
-            <tr>
-              <td>4</td>
-              <td>Decay monitor</td>
-              <td>Lets the system retire weak models automatically instead of clinging to them.</td>
-            </tr>
-          </tbody>
-        </table>
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Phase</th>
+                <th>Goal</th>
+                <th>Why it matters</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td>Dataset + training rows</td>
+                <td>Without a proper dataset, regression and factor ideas are still storytelling.</td>
+              </tr>
+              <tr>
+                <td>2</td>
+                <td>Walk-forward engine</td>
+                <td>Lets us measure whether a signal survives outside the exact period it was fitted on.</td>
+              </tr>
+              <tr>
+                <td>3</td>
+                <td>Model registry and promotion gates</td>
+                <td>Stops accidental replacement of the active engine with a prettier but weaker challenger.</td>
+              </tr>
+              <tr>
+                <td>4</td>
+                <td>Decay monitor</td>
+                <td>Lets the system retire weak models automatically instead of clinging to them.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </SectionCard>
     </AppShell>
   );

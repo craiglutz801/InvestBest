@@ -33,10 +33,19 @@ This directory contains the first scaffold:
 ```bash
 cd InvestBest_V2
 npm install
+cp .env.example .env.local
+# Add your real ALPHA_VANTAGE_API_KEY to .env.local
 npm run dev
 ```
 
 Then open [http://localhost:3000](http://localhost:3000).
+
+## Runtime config
+
+V2 reads `ALPHA_VANTAGE_API_KEY` from `InvestBest_V2/.env.local`.
+
+- Without it, the earnings calendar fetch is skipped and the event-penalty logic stays effectively off.
+- After adding or changing the key, restart `npm run dev`.
 
 ## What comes next
 

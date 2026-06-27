@@ -12,28 +12,30 @@ export default function CandidatesPage() {
         title="From symbol idea to validated model input"
         description="Candidates are not trades. They are hypotheses waiting to earn the right to become experiments."
       >
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Symbol</th>
-              <th>Family</th>
-              <th>Stage</th>
-              <th>Thesis</th>
-              <th>Verdict</th>
-            </tr>
-          </thead>
-          <tbody>
-            {candidateIdeas.map((candidate) => (
-              <tr key={candidate.id}>
-                <td><strong>{candidate.symbol}</strong></td>
-                <td>{candidate.family}</td>
-                <td><span className={`badge ${candidate.stage}`}>{candidate.stage}</span></td>
-                <td>{candidate.thesis}</td>
-                <td>{candidate.verdict}</td>
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th>Family</th>
+                <th>Stage</th>
+                <th>Thesis</th>
+                <th>Verdict</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {candidateIdeas.map((candidate) => (
+                <tr key={candidate.id}>
+                  <td><strong className="strong">{candidate.symbol}</strong></td>
+                  <td>{candidate.family}</td>
+                  <td><span className={`badge ${candidate.stage}`}>{candidate.stage}</span></td>
+                  <td>{candidate.thesis}</td>
+                  <td>{candidate.verdict}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </SectionCard>
     </AppShell>
   );
