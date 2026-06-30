@@ -1,15 +1,22 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { neon } from "@neondatabase/serverless";
 import { getNextScheduledRun } from "@/lib/schedule";
 import type { PaperPortfolioState } from "@/lib/types";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const STATE_PATH = path.join(DATA_DIR, "paper-portfolio.json");
 const IS_HOSTED_RUNTIME = process.env.VERCEL === "1";
+const PORTFOLIO_STATE_KEY = "paper-portfolio";
 
 type GlobalWithPortfolioCache = typeof globalThis & {
   __investbestV2PortfolioState?: PaperPortfolioState;
 };
+
+let databaseUrlInUse: string | null = null;
+let sqlClient: ReturnType<typeof neon> | null = null;
+let tableReadyPromise: Promise<void> | null = null;
+let warnedMissingHostedDatabase = false;
 
 function getCachedState(): PaperPortfolioState | undefined {
   return (globalThis as GlobalWithPortfolioCache).__investbestV2PortfolioState;
@@ -17,6 +24,109 @@ function getCachedState(): PaperPortfolioState | undefined {
 
 function setCachedState(state: PaperPortfolioState): void {
   (globalThis as GlobalWithPortfolioCache).__investbestV2PortfolioState = state;
+}
+
+function getDatabaseUrl(): string | null {
+  return (
+    process.env.DATABASE_URL?.trim() ||
+    process.env.POSTGRES_URL?.trim() ||
+    process.env.POSTGRES_PRISMA_URL?.trim() ||
+    null
+  );
+}
+
+function getSqlClient(): ReturnType<typeof neon> | null {
+  const databaseUrl = getDatabaseUrl();
+
+  if (!databaseUrl) {
+    if (IS_HOSTED_RUNTIME && !warnedMissingHostedDatabase) {
+      warnedMissingHostedDatabase = true;
+      console.warn(
+        "[paperPortfolio] Hosted runtime is missing DATABASE_URL/POSTGRES_URL. Portfolio state will not persist across instances.",
+      );
+    }
+    return null;
+  }
+
+  if (!sqlClient || databaseUrlInUse !== databaseUrl) {
+    databaseUrlInUse = databaseUrl;
+    sqlClient = neon(databaseUrl);
+    tableReadyPromise = null;
+  }
+
+  return sqlClient;
+}
+
+async function ensurePortfolioTable(): Promise<boolean> {
+  const sql = getSqlClient();
+  if (!sql) {
+    return false;
+  }
+
+  if (!tableReadyPromise) {
+    tableReadyPromise = sql`
+      CREATE TABLE IF NOT EXISTS investbest_v2_state (
+        state_key TEXT PRIMARY KEY,
+        state JSONB NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `.then(() => undefined);
+  }
+
+  await tableReadyPromise;
+  return true;
+}
+
+async function loadPortfolioStateFromDatabase(): Promise<PaperPortfolioState | null> {
+  if (!(await ensurePortfolioTable())) {
+    return null;
+  }
+
+  const sql = getSqlClient();
+  if (!sql) {
+    return null;
+  }
+
+  const rows = (await sql`
+    SELECT state
+    FROM investbest_v2_state
+    WHERE state_key = ${PORTFOLIO_STATE_KEY}
+    LIMIT 1
+  `) as Array<{ state: Partial<PaperPortfolioState> }>;
+
+  if (rows.length === 0) {
+    return null;
+  }
+
+  return normalizeState(rows[0].state);
+}
+
+async function savePortfolioStateToDatabase(state: PaperPortfolioState): Promise<boolean> {
+  if (!(await ensurePortfolioTable())) {
+    return false;
+  }
+
+  const sql = getSqlClient();
+  if (!sql) {
+    return false;
+  }
+
+  const serialized = JSON.stringify(state);
+
+  await sql`
+    INSERT INTO investbest_v2_state (state_key, state, updated_at)
+    VALUES (
+      ${PORTFOLIO_STATE_KEY},
+      CAST(${serialized} AS jsonb),
+      ${state.updatedAt}
+    )
+    ON CONFLICT (state_key)
+    DO UPDATE SET
+      state = EXCLUDED.state,
+      updated_at = EXCLUDED.updated_at
+  `;
+
+  return true;
 }
 
 function createInitialState(): PaperPortfolioState {
@@ -72,6 +182,17 @@ export async function loadPortfolioState(): Promise<PaperPortfolioState> {
   }
 
   try {
+    const databaseState = await loadPortfolioStateFromDatabase();
+    if (databaseState) {
+      setCachedState(databaseState);
+      return databaseState;
+    }
+  } catch (error) {
+    console.error("[paperPortfolio] Failed to load portfolio state from database.", error);
+    throw error;
+  }
+
+  try {
     const raw = await readFile(STATE_PATH, "utf8");
     const parsed = JSON.parse(raw) as Partial<PaperPortfolioState>;
     const normalized = normalizeState(parsed);
@@ -89,6 +210,16 @@ export async function loadPortfolioState(): Promise<PaperPortfolioState> {
 
 export async function savePortfolioState(state: PaperPortfolioState): Promise<void> {
   setCachedState(state);
+
+  try {
+    if (await savePortfolioStateToDatabase(state)) {
+      return;
+    }
+  } catch (error) {
+    console.error("[paperPortfolio] Failed to save portfolio state to database.", error);
+    throw error;
+  }
+
   if (IS_HOSTED_RUNTIME) {
     return;
   }

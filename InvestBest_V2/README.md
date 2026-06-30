@@ -47,6 +47,14 @@ V2 reads `ALPHA_VANTAGE_API_KEY` from `InvestBest_V2/.env.local`.
 - Without it, the earnings calendar fetch is skipped and the event-penalty logic stays effectively off.
 - After adding or changing the key, restart `npm run dev`.
 
+For durable shared simulator state on Vercel, also set one of these:
+
+- `DATABASE_URL`
+- `POSTGRES_URL`
+
+When either is present, V2 stores the paper portfolio in a Postgres table named `investbest_v2_state`.
+Without a database URL, local development falls back to `InvestBest_V2/data/paper-portfolio.json`, and hosted Vercel instances can only keep state in-memory for that one instance.
+
 ## What comes next
 
 1. Add a real database schema for experiments, validations, model versions, and promotion gates.
