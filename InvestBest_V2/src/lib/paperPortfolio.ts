@@ -18,6 +18,18 @@ let sqlClient: ReturnType<typeof neon> | null = null;
 let tableReadyPromise: Promise<void> | null = null;
 let warnedMissingHostedDatabase = false;
 
+function isIgnorableCreateTableRace(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return (
+    error.message.includes("pg_type_typname_nsp_index") ||
+    error.message.includes("already exists") ||
+    error.message.includes("duplicate key value violates unique constraint")
+  );
+}
+
 function getCachedState(): PaperPortfolioState | undefined {
   return (globalThis as GlobalWithPortfolioCache).__investbestV2PortfolioState;
 }
@@ -64,13 +76,21 @@ async function ensurePortfolioTable(): Promise<boolean> {
   }
 
   if (!tableReadyPromise) {
-    tableReadyPromise = sql`
-      CREATE TABLE IF NOT EXISTS investbest_v2_state (
-        state_key TEXT PRIMARY KEY,
-        state JSONB NOT NULL,
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )
-    `.then(() => undefined);
+    tableReadyPromise = (async () => {
+      try {
+        await sql`
+          CREATE TABLE IF NOT EXISTS investbest_v2_state (
+            state_key TEXT PRIMARY KEY,
+            state JSONB NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+          )
+        `;
+      } catch (error) {
+        if (!isIgnorableCreateTableRace(error)) {
+          throw error;
+        }
+      }
+    })();
   }
 
   await tableReadyPromise;
