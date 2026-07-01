@@ -89,7 +89,7 @@ export default async function HomePage() {
       <div className="grid two" style={{ marginTop: "1rem" }}>
         <SectionCard
           title="Automation status"
-          description="V2 scheduled runs now come from a local Mac launch agent instead of the browser."
+          description="V2 scheduled runs can come from a hosted cron trigger and write into the same shared paper portfolio."
         >
           <div className="grid two">
             <div className="note">
@@ -99,9 +99,9 @@ export default async function HomePage() {
               </p>
             </div>
             <div className="note">
-              <strong className="strong">State file</strong>
+              <strong className="strong">Shared state</strong>
               <p style={{ margin: "0.45rem 0 0", color: "var(--muted)" }}>
-                Scheduled runs write to the same paper portfolio state and run history that this dashboard reads.
+                Manual and scheduled runs write to the same persisted paper portfolio state and run history.
               </p>
             </div>
             <div className="note">

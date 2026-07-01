@@ -55,6 +55,13 @@ For durable shared simulator state on Vercel, also set one of these:
 When either is present, V2 stores the paper portfolio in a Postgres table named `investbest_v2_state`.
 Without a database URL, local development falls back to `InvestBest_V2/data/paper-portfolio.json`, and hosted Vercel instances can only keep state in-memory for that one instance.
 
+If you want Vercel Cron to trigger the scheduled simulator route securely, also set:
+
+- `CRON_SECRET`
+
+`InvestBest_V2/vercel.json` includes a weekday cron entry for `/api/runs/scheduled`.
+On Vercel Hobby, cron jobs can only run once per day, so this is a daily market-session heartbeat rather than a full hourly automation loop.
+
 ## What comes next
 
 1. Add a real database schema for experiments, validations, model versions, and promotion gates.

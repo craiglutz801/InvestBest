@@ -3,7 +3,17 @@ import { runScheduledSimulation } from "@/lib/simulator";
 
 export const dynamic = "force-dynamic";
 
-export async function POST() {
+function cronAuthorized(request: Request): boolean {
+  const secret = process.env.CRON_SECRET?.trim();
+
+  if (!secret) {
+    return true;
+  }
+
+  return request.headers.get("authorization") === `Bearer ${secret}`;
+}
+
+async function handleScheduledRun() {
   try {
     const state = await runScheduledSimulation();
     return NextResponse.json({ ok: true, portfolio: state });
@@ -11,4 +21,20 @@ export async function POST() {
     const message = error instanceof Error ? error.message : "Scheduled simulation failed";
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
+}
+
+export async function GET(request: Request) {
+  if (!cronAuthorized(request)) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+
+  return handleScheduledRun();
+}
+
+export async function POST(request: Request) {
+  if (!cronAuthorized(request)) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+
+  return handleScheduledRun();
 }

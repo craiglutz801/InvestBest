@@ -18,6 +18,10 @@ let sqlClient: ReturnType<typeof neon> | null = null;
 let tableReadyPromise: Promise<void> | null = null;
 let warnedMissingHostedDatabase = false;
 
+function shouldUseProcessCache(): boolean {
+  return !IS_HOSTED_RUNTIME && !getDatabaseUrl();
+}
+
 function isIgnorableCreateTableRace(error: unknown): boolean {
   if (!(error instanceof Error)) {
     return false;
@@ -31,10 +35,19 @@ function isIgnorableCreateTableRace(error: unknown): boolean {
 }
 
 function getCachedState(): PaperPortfolioState | undefined {
+  if (!shouldUseProcessCache()) {
+    return undefined;
+  }
+
   return (globalThis as GlobalWithPortfolioCache).__investbestV2PortfolioState;
 }
 
 function setCachedState(state: PaperPortfolioState): void {
+  if (!shouldUseProcessCache()) {
+    delete (globalThis as GlobalWithPortfolioCache).__investbestV2PortfolioState;
+    return;
+  }
+
   (globalThis as GlobalWithPortfolioCache).__investbestV2PortfolioState = state;
 }
 
