@@ -324,6 +324,67 @@ function sumMarketValue(positions: PortfolioPosition[]): number {
   return positions.reduce((sum, position) => sum + position.marketValue, 0);
 }
 
+export async function refreshPortfolioValuation(state: PaperPortfolioState): Promise<PaperPortfolioState> {
+  const asOfIso = new Date().toISOString();
+  const symbolsToRefresh = Array.from(new Set(["SPY", ...state.holdings.map((position) => position.symbol)]));
+
+  if (symbolsToRefresh.length === 0) {
+    return state;
+  }
+
+  const refreshedBars = await Promise.allSettled(
+    symbolsToRefresh.map(async (symbol) => ({
+      symbol,
+      bars: await fetchDailyCloses(symbol),
+    })),
+  );
+
+  const latestCloses = new Map(
+    refreshedBars
+      .filter(
+        (result): result is PromiseFulfilledResult<{ symbol: string; bars: PriceBar[] }> => result.status === "fulfilled",
+      )
+      .map(({ value }) => [value.symbol, value.bars.at(-1)?.close ?? null] as const)
+      .filter((entry): entry is [string, number] => entry[1] != null && Number.isFinite(entry[1])),
+  );
+
+  if (latestCloses.size === 0) {
+    return state;
+  }
+
+  const refreshedHoldings = state.holdings.map((position) => {
+    const latestPrice = latestCloses.get(position.symbol);
+    if (latestPrice == null) {
+      return {
+        ...position,
+        daysHeld: daysBetween(position.openedAt, asOfIso),
+      };
+    }
+
+    const marketValue = position.shares * latestPrice;
+    const costBasis = position.shares * position.averageCost;
+    const unrealizedPnl = marketValue - costBasis;
+
+    return {
+      ...position,
+      lastPrice: latestPrice,
+      marketValue,
+      unrealizedPnl,
+      unrealizedPnlPct: costBasis === 0 ? 0 : unrealizedPnl / costBasis,
+      highWaterMark: Math.max(position.highWaterMark, latestPrice),
+      daysHeld: daysBetween(position.openedAt, asOfIso),
+    };
+  });
+
+  return {
+    ...state,
+    updatedAt: asOfIso,
+    equity: state.cash + sumMarketValue(refreshedHoldings),
+    benchmarkCurrentPrice: latestCloses.get("SPY") ?? state.benchmarkCurrentPrice,
+    holdings: refreshedHoldings,
+  };
+}
+
 function createTrade(
   runId: string,
   symbol: string,

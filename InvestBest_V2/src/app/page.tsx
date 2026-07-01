@@ -25,7 +25,11 @@ function formatTimestamp(value: string | null): string {
     return "not yet";
   }
 
-  return new Date(value).toLocaleString();
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: "short",
+    timeStyle: "medium",
+    timeZone: "America/Los_Angeles",
+  }).format(new Date(value));
 }
 
 export default async function HomePage() {
@@ -52,7 +56,11 @@ export default async function HomePage() {
       label: "Automation",
       value: portfolio.automation.enabled ? "Armed" : "Off",
       change: portfolio.automation.nextPlannedRunAt
-        ? `next ${new Date(portfolio.automation.nextPlannedRunAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+        ? `next ${new Date(portfolio.automation.nextPlannedRunAt).toLocaleTimeString([], {
+            hour: "numeric",
+            minute: "2-digit",
+            timeZone: "America/Los_Angeles",
+          })}`
         : "no next run",
       tone: portfolio.automation.enabled ? "positive" : "negative",
     },
@@ -253,7 +261,7 @@ export default async function HomePage() {
                   portfolio.runHistory.slice(0, 12).map((run) => (
                     <tr key={run.id}>
                       <td>
-                        <strong className="strong">{new Date(run.executedAt).toLocaleString()}</strong>
+                        <strong className="strong">{formatTimestamp(run.executedAt)}</strong>
                         <div className="card-label">{run.note}</div>
                       </td>
                       <td><span className={`badge ${run.status}`}>{run.status}</span></td>
