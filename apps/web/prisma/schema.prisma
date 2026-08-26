@@ -44,6 +44,11 @@ model AppSettings {
   runFrequencyMinutes   Int            @default(60)
   paperStartDate        DateTime?
   paperEndDate          DateTime?
+  /**
+   * Operator pause / kill switch. When true, new agent runs are skipped and
+   * DecisionRun / PaperTrade / position history is preserved.
+   */
+  agentPaused           Boolean        @default(false)
   newsEnabled           Boolean        @default(false)
   shortingEnabled       Boolean        @default(false)
   defaultSlippagePct    Decimal        @default(0.05) @db.Decimal(6, 4)

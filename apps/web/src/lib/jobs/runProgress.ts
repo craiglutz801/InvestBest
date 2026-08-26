@@ -26,6 +26,8 @@ export type HoldingsMarkEntry = {
   ret20d: number;
 };
 
+import type { RunAuditRecord } from "@/lib/safety/auditTrail";
+
 /** Parsed `DecisionRun.notesJson` — includes agent metadata and live `progress` steps. */
 export type RunNotes = {
   progress?: RunProgressEntry[];
@@ -34,6 +36,9 @@ export type RunNotes = {
   error?: string;
   holdingsMarkBefore?: HoldingsMarkEntry[];
   holdingsMarkAfter?: HoldingsMarkEntry[];
+  /** Versioned inputs used to reconstruct a sampled paper decision. */
+  audit?: RunAuditRecord;
+  admission?: { reason: string; status: string };
 };
 
 export function parseRunNotes(raw: string | null | undefined): RunNotes {

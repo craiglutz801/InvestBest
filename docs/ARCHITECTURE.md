@@ -2,6 +2,8 @@
 
 This repo implements the **InvestBest Cursor Build Spec**: a paper-trading web app with hourly decision runs, Postgres persistence, and a path to ML scoring and LLM explanations only.
 
+**Research / paper trading only — not evidence of alpha, not financial advice, not a live broker.** The active Next.js runtime (`apps/web`) is fail-closed to `EXECUTION_MODE=paper`. Legacy Alpaca fields under `config/` and `backend/` are isolated from this app and must not be wired. See [`docs/PAPER_VALIDATION_RUNBOOK.md`](PAPER_VALIDATION_RUNBOOK.md).
+
 ## Primary application (`apps/web`)
 
 - **Framework**: Next.js App Router, TypeScript, Tailwind, shadcn-style UI primitives, Recharts.

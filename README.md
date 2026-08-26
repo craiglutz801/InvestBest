@@ -2,6 +2,8 @@
 
 Paper-trading web app: hourly agent, curated equity/ETF universe, auditable decisions, $100k simulated portfolio. Built to **InvestBest Cursor Build Spec** (`docs/InvestBest_Cursor_Build_Spec.md`).
 
+**Research / paper trading only.** Results are simulated, are **not** evidence of alpha, are **not** a live track record, and are **not** financial advice. The active runtime has no live-broker or real-money order path. Required capability boundary: `EXECUTION_MODE=paper` (missing or any other value fails closed). Operator pause/kill and the validation soak are documented in [`docs/PAPER_VALIDATION_RUNBOOK.md`](docs/PAPER_VALIDATION_RUNBOOK.md).
+
 ## New stack (spec-aligned)
 
 | Area | Choice |

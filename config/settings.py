@@ -26,7 +26,9 @@ class Settings(BaseSettings):
     alpha_vantage_api_key: str = ""
     fred_api_key: str = ""
 
-    # Broker
+    # Broker — LEGACY FastAPI stack only (`backend/`). Not used by the active
+    # Next.js paper engine (`apps/web`). Do not copy these into apps/web/.env
+    # and do not treat a configured Alpaca key as a live-order path.
     alpaca_api_key: str = ""
     alpaca_secret_key: str = ""
     alpaca_base_url: str = "https://paper-api.alpaca.markets"

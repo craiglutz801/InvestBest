@@ -37,6 +37,21 @@ import {
   type HoldingsMarkEntry,
 } from "@/lib/jobs/runProgress";
 import { orderUniverseHoldingsFirst, prepareUniverseForFreeTier } from "@/lib/jobs/freeTierUniverse";
+import {
+  buildSettingsSnapshot,
+  createRunAuditRecord,
+  recordAuditFill,
+  recordDataQualitySkip,
+  type RunAuditRecord,
+} from "@/lib/safety/auditTrail";
+import {
+  dataQualitySkipMessage,
+  evaluateBars,
+  evaluateQuote,
+  type DataQualityResult,
+} from "@/lib/safety/marketDataGate";
+import { admitPaperAgentRun } from "@/lib/safety/runAdmission";
+import { hourBucketKey, shouldSkipDuplicateHourlyRun } from "@/lib/scheduler/idempotency";
 
 export type RunAgentTrigger = "hourly" | "manual";
 
@@ -54,10 +69,6 @@ type RotationHolding = {
   confidenceScore: number;
   breakdown: ScoreBreakdown;
 };
-
-function hourBucketKey(d: Date): string {
-  return `${d.toISOString().slice(0, 13)}`;
-}
 
 /** Stale `@prisma/client` may omit model delegates — `undefined.findFirst` at runtime. */
 async function findLatestCashAfterPaperTrade(userId: string): Promise<{ cashAfter: unknown } | null> {
@@ -263,6 +274,11 @@ async function applyLiveQuotesForHoldings(
     const sym = p.symbol.dataProviderSymbol ?? p.symbol.ticker;
     try {
       const q = await fetchQuoteDetail(sym, apiKey);
+      const qQuality = evaluateQuote(q);
+      if (!qQuality.ok) {
+        m.set(p.symbolId, "stale");
+        continue;
+      }
       priceBySymbol.set(p.symbolId, q.price);
       m.set(p.symbolId, "ok");
       if (persistQuoteRows) {
@@ -488,12 +504,17 @@ async function ensureHeldSymbolPricing(
   trendBySymbolId: Map<string, SymbolTrends>,
   useMock: boolean,
   apiKey: string,
+  barsBySymbol?: Map<string, OhlcvBar[]>,
 ): Promise<void> {
   if (priceBySymbol.has(pos.symbolId) && trendBySymbolId.has(pos.symbolId)) return;
   const td = pos.symbol.dataProviderSymbol ?? pos.symbol.ticker;
   try {
     const bars = useMock ? mockBars(pos.symbol.ticker) : await fetchDailySeries(td, apiKey, 120);
+    const quality = evaluateBars(bars);
+    if (!quality.ok) return;
     const last = bars[bars.length - 1];
+    if (last) priceBySymbol.set(pos.symbolId, last.close);
+    barsBySymbol?.set(pos.symbolId, bars);
     if (last) priceBySymbol.set(pos.symbolId, last.close);
     const { features } = computeFeatures(bars);
     trendBySymbolId.set(pos.symbolId, {
@@ -599,6 +620,54 @@ function mergeExplorer(
     rejectionReason:
       patch.rejectionReason !== undefined ? patch.rejectionReason : (prev?.rejectionReason ?? null),
   });
+}
+
+async function persistQualitySkip(args: {
+  runId: string;
+  symbolId: string;
+  ticker: string;
+  segmentKey: string | null;
+  result: Extract<DataQualityResult, { ok: false }>;
+  explorer: Map<string, ExplorerRow>;
+  audit: RunAuditRecord;
+  phase?: string;
+  status?: string;
+}): Promise<void> {
+  mergeExplorer(args.explorer, args.symbolId, {
+    ticker: args.ticker,
+    segmentKey: args.segmentKey,
+    status: args.status ?? "ingest_failed",
+    currentPrice: null,
+    ret1d: null,
+    ret5d: null,
+    volatility20d: null,
+    buyScore: null,
+    sellRiskScore: null,
+    confidenceScore: null,
+    buyRank: null,
+    rejectionReason: args.result.reason,
+  });
+  await prisma.decisionRunItem.create({
+    data: {
+      decisionRunId: args.runId,
+      symbolId: args.symbolId,
+      actionRecommendation: "skip",
+      blocked: true,
+      blockedReason: args.result.reason,
+      rationaleShort: dataQualitySkipMessage(args.result),
+    },
+  });
+  recordDataQualitySkip(args.audit, {
+    ticker: args.ticker,
+    reason: args.result.reason,
+    detail: args.result.detail,
+  });
+  await appendRunProgress(
+    args.runId,
+    args.phase ?? "ingest",
+    `${args.ticker}: no-trade (${args.result.reason})`,
+    args.result.detail,
+  );
 }
 
 async function persistExplorerRows(runId: string, explorer: Map<string, ExplorerRow>) {
@@ -716,6 +785,17 @@ async function hourlyMarketAgentPipeline(
       : strategyMode === "regression_v1"
         ? "regression-v1"
         : "rules-v1";
+  const audit = createRunAuditRecord({
+    strategyMode,
+    modelVersion: strategyModelVersion,
+    dataSource: useMock ? "mock" : "twelvedata",
+    settings: buildSettingsSnapshot({
+      ...settings,
+      strategyMode,
+      agentPaused: (settings as { agentPaused?: boolean }).agentPaused === true,
+    }),
+  });
+  const barsBySymbol = new Map<string, OhlcvBar[]>();
   const positions = await prisma.paperPosition.findMany({
     where: { userId, isOpen: true },
     include: { symbol: true },
@@ -761,8 +841,34 @@ async function hourlyMarketAgentPipeline(
       const tdSymbol = s.dataProviderSymbol ?? s.ticker;
       try {
         const bars = useMock ? mockBars(s.ticker) : await fetchDailySeries(tdSymbol, apiKey, 120);
+        const quality = evaluateBars(bars);
+        if (!quality.ok) {
+          await persistQualitySkip({
+            runId,
+            symbolId: s.id,
+            ticker: s.ticker,
+            segmentKey: s.segmentKey ?? null,
+            result: quality,
+            explorer,
+            audit,
+          });
+          continue;
+        }
         const last = bars[bars.length - 1];
-        if (last) priceBySymbol.set(s.id, last.close);
+        if (!last) {
+          await persistQualitySkip({
+            runId,
+            symbolId: s.id,
+            ticker: s.ticker,
+            segmentKey: s.segmentKey ?? null,
+            result: { ok: false, reason: "MISSING_BARS", detail: "Validated series had no last bar." },
+            explorer,
+            audit,
+          });
+          continue;
+        }
+        priceBySymbol.set(s.id, last.close);
+        barsBySymbol.set(s.id, bars);
 
         const { features, completeness } = computeFeatures(bars);
         trendBySymbolId.set(s.id, {
@@ -771,6 +877,13 @@ async function hourlyMarketAgentPipeline(
           ret20d: features.ret20d,
         });
         const scores = strategyScores(strategyMode, features);
+        audit.featureInputs = audit.featureInputs ?? {};
+        audit.featureInputs[s.ticker] = {
+          ...features,
+          completeness,
+          source: useMock ? "mock" : "twelvedata",
+          barAsOf: last.time instanceof Date ? last.time.toISOString() : String(last.time),
+        };
 
         await prisma.marketSnapshot.create({
           data: {
@@ -865,7 +978,7 @@ async function hourlyMarketAgentPipeline(
     );
 
     for (const pos of positions) {
-      await ensureHeldSymbolPricing(pos, priceBySymbol, trendBySymbolId, useMock, apiKey);
+      await ensureHeldSymbolPricing(pos, priceBySymbol, trendBySymbolId, useMock, apiKey, barsBySymbol);
     }
 
     const quoteFreshPre = await applyLiveQuotesForHoldings(
@@ -988,9 +1101,25 @@ async function hourlyMarketAgentPipeline(
       }
       const qty = toNum(pos.quantity);
       const avg = toNum(pos.avgCost);
-      const posBars = useMock
+      const posBars = barsBySymbol.get(pos.symbolId) ?? (useMock
         ? mockBars(pos.symbol.ticker)
-        : await fetchDailySeries(pos.symbol.dataProviderSymbol ?? pos.symbol.ticker, apiKey, 120);
+        : await fetchDailySeries(pos.symbol.dataProviderSymbol ?? pos.symbol.ticker, apiKey, 120));
+      const posQuality = evaluateBars(posBars);
+      if (!posQuality.ok) {
+        await persistQualitySkip({
+          runId,
+          symbolId: pos.symbolId,
+          ticker: pos.symbol.ticker,
+          segmentKey: pos.symbol.segmentKey ?? null,
+          result: posQuality,
+          explorer,
+          audit,
+          phase: "sells",
+          status: "skipped_sell",
+        });
+        continue;
+      }
+      barsBySymbol.set(pos.symbolId, posBars);
       const feat = computeFeatures(posBars).features;
 
       const recentSlice = posBars.slice(-30);
@@ -1079,6 +1208,18 @@ async function hourlyMarketAgentPipeline(
             cashAfter: cash,
             expectedHorizon: "5d",
           },
+        });
+        recordAuditFill(audit, {
+          action: "COVER",
+          ticker: pos.symbol.ticker,
+          quantity: qty,
+          rawPrice: px,
+          fillPrice: exec,
+          slippagePct: slippage,
+          cashBefore,
+          cashAfter: cash,
+          reasonCode: coverDecision.code,
+          reasonText: coverReasonText,
         });
 
         await prisma.paperPosition.update({
@@ -1182,21 +1323,33 @@ async function hourlyMarketAgentPipeline(
           userId,
           symbolId: pos.symbolId,
           decisionRunId: runId,
+            action: "SELL",
+            quantity: qty,
+            price: exec,
+            slippagePct: slippage,
+            fees,
+            grossAmount: gross,
+            reasonCode: sellDecision.code,
+            reasonText: sellReasonText,
+            modelVersion: strategyModelVersion,
+            confidenceScore: scores.confidenceScore,
+            cashBefore,
+            cashAfter: cash,
+            expectedHorizon: "5d",
+          },
+        });
+        recordAuditFill(audit, {
           action: "SELL",
+          ticker: pos.symbol.ticker,
           quantity: qty,
-          price: exec,
+          rawPrice: px,
+          fillPrice: exec,
           slippagePct: slippage,
-          fees,
-          grossAmount: gross,
-          reasonCode: sellDecision.code,
-          reasonText: sellReasonText,
-          modelVersion: strategyModelVersion,
-          confidenceScore: scores.confidenceScore,
           cashBefore,
           cashAfter: cash,
-          expectedHorizon: "5d",
-        },
-      });
+          reasonCode: sellDecision.code,
+          reasonText: sellReasonText,
+        });
 
       await prisma.paperPosition.update({
         where: { id: pos.id },
@@ -1241,15 +1394,27 @@ async function hourlyMarketAgentPipeline(
 
     // Market regime check (soft buy throttle). SPY bars are also reused for benchmark later.
     let spyBars: OhlcvBar[];
+    let spyQualityOk = true;
     try {
-      // Pull enough benchmark history to compute SMA200 reliably.
       spyBars = useMock ? mockBars("SPY") : await fetchDailySeries("SPY", apiKey, 260);
-    } catch {
-      spyBars = mockBars("SPY");
+      const spyQuality = evaluateBars(spyBars, { minBars: 50 });
+      if (!spyQuality.ok) {
+        spyQualityOk = false;
+        recordDataQualitySkip(audit, { ticker: "SPY", reason: spyQuality.reason, detail: spyQuality.detail });
+        await appendRunProgress(runId, "regime", `SPY data invalid — new buys blocked (${spyQuality.reason})`, spyQuality.detail);
+      }
+    } catch (e) {
+      spyQualityOk = false;
+      const detail = e instanceof Error ? e.message : String(e);
+      recordDataQualitySkip(audit, { ticker: "SPY", reason: "MISSING_BARS", detail });
+      await appendRunProgress(runId, "regime", "SPY data missing — new buys blocked", detail);
+      spyBars = [];
     }
-    const regime = assessMarketRegime(spyBars.map((b) => b.close));
-    const regimeAllowsShort = !shortOnlyInBearRegime || regime.regime === "bearish";
-    const regimeAdj = regimeAdjustedMaxNew(maxNew, regime.regime, regimeFilterMode);
+    const regime = assessMarketRegime(spyQualityOk ? spyBars.map((b) => b.close) : []);
+    const regimeAllowsShort = spyQualityOk && (!shortOnlyInBearRegime || regime.regime === "bearish");
+    const regimeAdj = spyQualityOk
+      ? regimeAdjustedMaxNew(maxNew, regime.regime, regimeFilterMode)
+      : { adjusted: 0, throttled: maxNew > 0, mode: "strict" as const };
     const effectiveMaxNew = regimeAdj.adjusted;
     await appendRunProgress(
       runId,
@@ -1316,7 +1481,16 @@ async function hourlyMarketAgentPipeline(
         });
         continue;
       }
-      const bars = useMock ? mockBars(s.ticker) : await fetchDailySeries(s.dataProviderSymbol ?? s.ticker, apiKey, 120);
+      const bars = barsBySymbol.get(s.id);
+      if (!bars) {
+        mergeExplorer(explorer, s.id, {
+          ticker: s.ticker,
+          segmentKey: s.segmentKey ?? null,
+          status: "skipped_buy",
+          rejectionReason: "MISSING_BARS",
+        });
+        continue;
+      }
       const { features } = computeFeatures(bars);
       const scores = strategyScores(strategyMode, features);
       const universePolicy = applyLongUniversePolicy({
@@ -1500,6 +1674,18 @@ async function hourlyMarketAgentPipeline(
             expectedHorizon: "5d",
           },
         });
+        recordAuditFill(audit, {
+          action: "SELL",
+          ticker: rotationTarget.ticker,
+          quantity: rotationTarget.quantity,
+          rawPrice: rotationTarget.currentPrice,
+          fillPrice: rotationExec,
+          slippagePct: slippage,
+          cashBefore: rotationCashBefore,
+          cashAfter: cash,
+          reasonCode: "rebalance",
+          reasonText: rotationReasonText,
+        });
 
         await prisma.paperPosition.update({
           where: { id: rotationTarget.positionId },
@@ -1604,6 +1790,18 @@ async function hourlyMarketAgentPipeline(
           cashAfter: cash,
           expectedHorizon: "5d",
         },
+      });
+      recordAuditFill(audit, {
+        action: "BUY",
+        ticker: c.ticker,
+        quantity: qty,
+        rawPrice: c.price,
+        fillPrice: execPx,
+        slippagePct: slippage,
+        cashBefore,
+        cashAfter: cash,
+        reasonCode: "buy_rank",
+        reasonText: buyReasonText,
       });
 
       const posNote = `buy=${c.buyScore} conf=${c.confidence} | ${c.breakdown.featureSummary}`;
@@ -1736,7 +1934,8 @@ async function hourlyMarketAgentPipeline(
       const px = priceBySymbol.get(s.id);
       if (px == null) continue;
 
-      const bars = useMock ? mockBars(s.ticker) : await fetchDailySeries(s.dataProviderSymbol ?? s.ticker, apiKey, 120);
+      const bars = barsBySymbol.get(s.id);
+      if (!bars) continue;
       const { features } = computeFeatures(bars);
       const scores = strategyScores(strategyMode, features);
       const bs = bearScores(features);
@@ -1855,6 +2054,18 @@ async function hourlyMarketAgentPipeline(
           cashAfter: cash,
           expectedHorizon: "5d",
         },
+      });
+      recordAuditFill(audit, {
+        action: "SHORT",
+        ticker: c.ticker,
+        quantity: qty,
+        rawPrice: c.price,
+        fillPrice: execPx,
+        slippagePct: slippage,
+        cashBefore,
+        cashAfter: cash,
+        reasonCode: "bear_rank",
+        reasonText: shortReasonText,
       });
 
       const posNoteShort = `short bear=${c.bearScore} conf=${c.confidence} | ${c.scoreBreakdown.featureSummary}`;
@@ -1988,7 +2199,7 @@ async function hourlyMarketAgentPipeline(
       include: { symbol: true },
     });
     for (const p of finalPositions) {
-      await ensureHeldSymbolPricing(p, priceBySymbol, trendBySymbolId, useMock, apiKey);
+      await ensureHeldSymbolPricing(p, priceBySymbol, trendBySymbolId, useMock, apiKey, barsBySymbol);
     }
     const quoteFreshPost = await applyLiveQuotesForHoldings(
       finalPositions,
@@ -2123,7 +2334,12 @@ async function hourlyMarketAgentPipeline(
         maxShortPositionsPerRun: settings.maxShortPositionsPerRun,
         buyScoreCoverShortThreshold: toNum(settings.buyScoreCoverShortThreshold),
       }),
-      rankingInputsJson: JSON.stringify({ modelVersion: strategyModelVersion, strategyMode }),
+      rankingInputsJson: JSON.stringify({
+        modelVersion: strategyModelVersion,
+        strategyMode,
+        settingsVersion: audit.settingsVersion,
+        executionMode: "paper",
+      }),
       candidateExplorerJson: JSON.stringify({
         note: "Full per-symbol grid: Decisions page + decision_run_item; export planned.",
       }),
@@ -2136,6 +2352,14 @@ async function hourlyMarketAgentPipeline(
     const doneNotes = parseRunNotes(notesRow?.notesJson);
     doneNotes.useMock = useMock;
     doneNotes.symbols = symbols.length;
+    audit.portfolioAfter = {
+      cash,
+      investedValue: investedAfter,
+      totalValue: totalAfter,
+      unrealizedPnl: unrealized,
+      realizedPnl: realizedPnlTotal,
+    };
+    doneNotes.audit = audit;
 
     await prisma.decisionRun.update({
       where: { id: runId },
@@ -2211,6 +2435,40 @@ export async function runHourlyMarketAgent(
   const settings = await prisma.appSettings.findUnique({ where: { userId } });
   if (!settings) throw new Error("No app settings for user");
 
+  const admission = admitPaperAgentRun({ env: process.env, settings });
+  if (!admission.allowed) {
+    const blockedNotes = JSON.stringify({
+      progress: [],
+      error: admission.detail,
+      admission: { reason: admission.reason, status: admission.status },
+    });
+    const existingBlocked = options?.idempotencyKey
+      ? await prisma.decisionRun.findUnique({ where: { idempotencyKey: options.idempotencyKey } })
+      : null;
+    if (existingBlocked) {
+      await prisma.decisionRun.update({
+        where: { id: existingBlocked.id },
+        data: {
+          status: admission.status === "blocked_execution_mode" ? "failed" : "skipped",
+          finishedAt: new Date(),
+          notesJson: blockedNotes,
+        },
+      });
+      return { runId: existingBlocked.id, status: admission.status };
+    }
+    const created = await prisma.decisionRun.create({
+      data: {
+        userId,
+        status: admission.status === "blocked_execution_mode" ? "failed" : "skipped",
+        universeSize: 0,
+        triggerSource,
+        runMode,
+        notesJson: blockedNotes,
+      },
+    });
+    return { runId: created.id, status: admission.status };
+  }
+
   const defaultIdemKey =
     trigger === "manual"
       ? `manual-${userId}-${Date.now()}`
@@ -2219,10 +2477,10 @@ export async function runHourlyMarketAgent(
         : `${userId}-${hourBucketKey(new Date())}`;
   const idempotencyKey = options?.idempotencyKey ?? defaultIdemKey;
 
-  if (trigger === "hourly") {
+  {
     const existing = await prisma.decisionRun.findUnique({ where: { idempotencyKey } });
-    if (existing?.status === "completed") {
-      return { runId: existing.id, status: "skipped_duplicate" };
+    if (shouldSkipDuplicateHourlyRun(existing, trigger)) {
+      return { runId: existing!.id, status: "skipped_duplicate" };
     }
   }
 

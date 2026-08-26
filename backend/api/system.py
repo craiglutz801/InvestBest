@@ -1,4 +1,8 @@
-"""System status, health, and services checklist."""
+"""System status, health, and services checklist.
+
+Legacy FastAPI surface. Alpaca status here is unused isolation leftover and is
+not an order path. The active paper engine is apps/web with EXECUTION_MODE=paper.
+"""
 from fastapi import APIRouter
 from config.settings import get_settings
 

@@ -11,12 +11,16 @@ Use this list to obtain accounts and API keys. Check off as you go.
 | **FRED** | Macro (rates, inflation, unemployment) | [fred.stlouisfed.org](https://fred.stlouisfed.org/docs/api/api_key.html) | ☐ |
 | **News / RSS** | Headlines, sentiment | RSS feeds or NewsAPI | ☐ |
 
-## Broker / Execution
+## Broker / Execution (legacy only — not wired to `apps/web`)
+
+The active paper MVP has **no live broker SDK or order path**. Alpaca / IB
+keys below apply only to the unused FastAPI stack under `backend/` + `config/`.
+Do not add them to `apps/web/.env`.
 
 | Service | Purpose | Get it | Status |
 |--------|---------|--------|--------|
-| **Alpaca** | Commission-free trading, paper + live | [alpaca.markets](https://alpaca.markets) | ☐ |
-| **Interactive Brokers** | Optional; more products | [interactivebrokers.com](https://www.interactivebrokers.com) | ☐ |
+| **Alpaca** | Legacy unused config only | [alpaca.markets](https://alpaca.markets) | isolated / unused by active app |
+| **Interactive Brokers** | Unused | [interactivebrokers.com](https://www.interactivebrokers.com) | isolated / unused by active app |
 
 ## AI / Research
 
