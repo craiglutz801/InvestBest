@@ -22,6 +22,7 @@ class EligibilityReasonCode(str, Enum):
     MISSING_OR_INVALID_DATA = "missing_or_invalid_data"
     SHORT_SAMPLE = "short_sample"
     POINT_IN_TIME_VIOLATION = "point_in_time_violation"
+    MISALIGNED_INPUTS = "misaligned_inputs"
 
     # Statistical formation
     CADF_NOT_COINTEGRATED = "cadf_not_cointegrated"
@@ -63,6 +64,7 @@ INSUFFICIENT_DATA_CODES = frozenset(
         EligibilityReasonCode.MISSING_OR_INVALID_DATA,
         EligibilityReasonCode.SHORT_SAMPLE,
         EligibilityReasonCode.POINT_IN_TIME_VIOLATION,
+        EligibilityReasonCode.MISALIGNED_INPUTS,
         EligibilityReasonCode.MISSING_EFR_INPUTS,
         EligibilityReasonCode.INVALID_FRICTION,
         EligibilityReasonCode.MISSING_LIQUIDITY_SNAPSHOT,

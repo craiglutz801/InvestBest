@@ -49,10 +49,20 @@ def fit_pair_residual(y: np.ndarray, x: np.ndarray, symbols: Sequence[str]) -> R
 
     y = np.asarray(y, dtype=np.float64).reshape(-1)
     x = np.asarray(x, dtype=np.float64).reshape(-1)
-    n = min(y.size, x.size)
-    y = y[:n]
-    x = x[:n]
     names = tuple(symbols[:2])
+    if y.size != x.size:
+        return ResidualFit(
+            symbols=names,
+            hedge_ratio={},
+            intercept=float("nan"),
+            residual=np.asarray([], dtype=float),
+            last_zscore=None,
+            residual_mean=float("nan"),
+            residual_std=float("nan"),
+            method="ols_y_on_x",
+            usable=False,
+            message=f"Refusing to truncate unequal-length legs ({y.size} vs {x.size})",
+        )
     try:
         coef, resid, rank = ols_with_intercept(y, x)
     except (np.linalg.LinAlgError, ValueError) as exc:
@@ -250,9 +260,13 @@ def rolling_hedge_relative_std(
     x_arr = np.asarray(x, dtype=np.float64)
     if x_arr.ndim == 1:
         x_arr = x_arr.reshape(-1, 1)
-    n = min(y.size, x_arr.shape[0])
-    y = y[:n]
-    x_arr = x_arr[:n]
+    if y.size != x_arr.shape[0]:
+        return {
+            "n_windows": 0,
+            "n_usable_windows": 0,
+            "beta_relative_std": None,
+        }
+    n = y.size
     ends = _window_ends(n, window, step)
     betas: list[np.ndarray] = []
     for end in ends:

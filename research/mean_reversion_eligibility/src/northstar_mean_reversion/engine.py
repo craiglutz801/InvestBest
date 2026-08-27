@@ -16,9 +16,13 @@ from northstar_diagnostics.cadf import cadf_cointegration
 from northstar_diagnostics.efr import edge_to_friction_ratio
 from northstar_diagnostics.half_life import mean_reversion_half_life
 from northstar_diagnostics.johansen import johansen_cointegration
+from northstar_diagnostics.quality import QualityCode
 from northstar_diagnostics.rolling import rolling_parameter_stability
 from northstar_diagnostics.schema import DiagnosticResult
-from northstar_diagnostics.series import prepare_panel
+from northstar_diagnostics.series import (
+    length_mismatch_flag,
+    prepare_panel,
+)
 from northstar_diagnostics.structural_break import (
     CUSUMOLSBreakDetector,
     ChowBreakDetector,
@@ -430,6 +434,107 @@ def _evaluate_efr(
     )
 
 
+_ALIGN_QUALITY_CODES = frozenset(
+    {
+        QualityCode.LENGTH_MISMATCH,
+        QualityCode.TIMESTAMP_MISMATCH,
+    }
+)
+_PIT_QUALITY_CODES = frozenset(
+    {
+        QualityCode.UNSORTED_TIMESTAMPS,
+        QualityCode.MISSING_TIMESTAMPS,
+        QualityCode.POINT_IN_TIME_SLICE,
+    }
+)
+_INVALID_QUALITY_CODES = frozenset(
+    {
+        QualityCode.MISSING_DATA,
+        QualityCode.NON_FINITE,
+        QualityCode.INTERIOR_MISSING,
+        QualityCode.CONSTANT_SERIES,
+        QualityCode.NEAR_SINGULAR,
+        QualityCode.COLLINEAR_SERIES,
+        QualityCode.INSUFFICIENT_RANK,
+        QualityCode.DEGENERATE_VARIANCE,
+        QualityCode.INVALID_INPUT,
+    }
+)
+
+
+def _market_data_reason(flags: tuple) -> EligibilityReasonCode:
+    codes = {flag.code for flag in flags}
+    if codes & _ALIGN_QUALITY_CODES:
+        return EligibilityReasonCode.MISALIGNED_INPUTS
+    if codes & _INVALID_QUALITY_CODES:
+        return EligibilityReasonCode.MISSING_OR_INVALID_DATA
+    if codes & _PIT_QUALITY_CODES:
+        return EligibilityReasonCode.POINT_IN_TIME_VIOLATION
+    if QualityCode.SHORT_SAMPLE in codes:
+        return EligibilityReasonCode.SHORT_SAMPLE
+    return EligibilityReasonCode.MISSING_OR_INVALID_DATA
+
+
+def _aligned_leg_matrix(
+    candidate: EconomicCandidate,
+    gates: list[GateResult],
+) -> np.ndarray | None:
+    """Assemble equal-length legs. Never truncate a shorter series to fit."""
+
+    columns: list[np.ndarray] = []
+    lengths: list[int] = []
+    for symbol in candidate.symbols:
+        arr = np.asarray(candidate.legs[symbol], dtype=float).reshape(-1)
+        columns.append(arr)
+        lengths.append(int(arr.size))
+    if not columns:
+        gates.append(
+            GateResult(
+                gate_id="market_data",
+                passed=False,
+                reason_code=EligibilityReasonCode.MISSING_OR_INVALID_DATA,
+                message="Candidate has no price legs",
+                evidence={},
+            )
+        )
+        return None
+    for length in lengths[1:]:
+        mismatch = length_mismatch_flag(lengths[0], length, what="candidate legs")
+        if mismatch is not None:
+            gates.append(
+                GateResult(
+                    gate_id="market_data",
+                    passed=False,
+                    reason_code=EligibilityReasonCode.MISALIGNED_INPUTS,
+                    message=mismatch.message,
+                    evidence={
+                        "leg_lengths": dict(zip(candidate.symbols, lengths)),
+                        "quality_flags": [mismatch.to_dict()],
+                    },
+                )
+            )
+            return None
+    if candidate.timestamps is not None:
+        n_ts = len(candidate.timestamps)
+        if n_ts != lengths[0]:
+            mismatch = length_mismatch_flag(lengths[0], n_ts, what="price legs and timestamps")
+            gates.append(
+                GateResult(
+                    gate_id="market_data",
+                    passed=False,
+                    reason_code=EligibilityReasonCode.MISALIGNED_INPUTS,
+                    message=(
+                        mismatch.message
+                        if mismatch is not None
+                        else "timestamps length does not match price legs"
+                    ),
+                    evidence={"n_obs": lengths[0], "n_timestamps": n_ts},
+                )
+            )
+            return None
+    return np.column_stack(columns)
+
+
 def _evaluate_statistical_gates(
     candidate: EconomicCandidate,
     config: MeanReversionEligibilityConfig,
@@ -438,9 +543,12 @@ def _evaluate_statistical_gates(
     diagnostics: dict[str, DiagnosticResult],
 ) -> ResidualFit | None:
     symbols = tuple(candidate.symbols)
+    aligned = _aligned_leg_matrix(candidate, gates)
+    if aligned is None:
+        return None
     try:
         panel, prepared = prepare_panel(
-            np.column_stack([np.asarray(candidate.legs[s], dtype=float).reshape(-1) for s in symbols]),
+            aligned,
             timestamps=candidate.timestamps,
             as_of=candidate.as_of,
             min_obs=config.min_obs,
@@ -459,11 +567,7 @@ def _evaluate_statistical_gates(
         return None
 
     if panel is None or not prepared.usable:
-        fail_code = EligibilityReasonCode.SHORT_SAMPLE
-        if any(flag.code in {"missing_data", "non_finite", "interior_missing"} for flag in prepared.flags):
-            fail_code = EligibilityReasonCode.MISSING_OR_INVALID_DATA
-        if any(flag.code == "unsorted_timestamps" for flag in prepared.flags):
-            fail_code = EligibilityReasonCode.POINT_IN_TIME_VIOLATION
+        fail_code = _market_data_reason(prepared.flags)
         gates.append(
             GateResult(
                 gate_id="market_data",
@@ -680,12 +784,19 @@ def _record_cadf_gate(
     gates: list[GateResult],
 ) -> None:
     if not cadf.is_usable:
+        codes = {flag.code for flag in cadf.quality_flags}
+        if codes & _ALIGN_QUALITY_CODES:
+            reason = EligibilityReasonCode.MISALIGNED_INPUTS
+            message = "CADF refused misaligned or unequal-length inputs"
+        else:
+            reason = EligibilityReasonCode.MISSING_OR_INVALID_DATA
+            message = "CADF diagnostic was not usable"
         gates.append(
             GateResult(
                 gate_id="cointegration",
                 passed=False,
-                reason_code=EligibilityReasonCode.MISSING_OR_INVALID_DATA,
-                message="CADF diagnostic was not usable",
+                reason_code=reason,
+                message=message,
                 evidence={"quality_flags": [flag.to_dict() for flag in cadf.quality_flags]},
             )
         )

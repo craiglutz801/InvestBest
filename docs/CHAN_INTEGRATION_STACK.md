@@ -10,14 +10,14 @@ branch so adapters can call native APIs. It does **not** merge those PRs to `mai
 
 | Stage | PR | Owning branch head | Copied onto Stage 6? |
 |---|---|---|---|
-| 1 | #4 | `d2b3218` Fail closed on misaligned CADF inputs and rank-deficient panels | **yes** (refreshed this pass) |
-| 2 | #11 | `b0d3e7f` Add Stage 2 mean-reversion eligibility engine | yes (no newer head this pass) |
+| 1 | #4 | `d2b3218` Fail closed on misaligned CADF inputs and rank-deficient panels | **yes** |
+| 2 | #11 | `55e2af7` Honor Stage 1 fail-closed CADF alignment in eligibility | **yes** (refreshed this pass) |
 | 3 | #10 | `30cf67e` Add Stage 3 multi-speed trend and futures carry research module | yes (unchanged) |
-| 4 | #13 | `f5db175` Add Stage 4 edge-health and structural-break monitoring | yes (no newer head this pass) |
+| 4 | #13 | `75146a5` Fail closed when Stage 1 CADF or pair inputs are unusable | **yes** (refreshed this pass) |
 | 5 | #14 | `0c687c9` Add Stage 5 anti-overfit promotion gates and Kelly ceiling | yes (unchanged) |
 | 6 | #12 | this branch | — |
 
-Stage 2 and Stage 4 did **not** publish dependency-update heads during this pass. Their packages stay at the commits above and are re-tested against copied Stage 1 `d2b3218` on this integration branch.
+Stage 2 `55e2af7` and Stage 4 `75146a5` honor Stage 1 `d2b3218` fail-closed CADF alignment. Copied onto this integration branch; not a merge to `main`.
 
 ```text
 main
@@ -30,10 +30,10 @@ main
  ├── PR #4   Stage 1 diagnostics         cursor/chan-stage1-statistical-diagnostics-fd6c
  │     head d2b3218  research/statistical_diagnostics  (northstar_diagnostics)
  │     ├── PR #11 Stage 2 eligibility    cursor/chan-stage2-mean-reversion-eligibility-7dee
- │     │     head b0d3e7f  research/mean_reversion_eligibility  (northstar_mean_reversion)
+ │     │     head 55e2af7  research/mean_reversion_eligibility  (northstar_mean_reversion)
  │     │     evaluate_candidate(candidate, *, config=)
  │     └── PR #13 Stage 4 edge health    cursor/chan-stage4-edge-health-136d
- │           head f5db175  research/edge_health  (northstar_edge_health)
+ │           head 75146a5  research/edge_health  (northstar_edge_health)
  │           HealthMonitor.evaluate(evidence, *, identity=)
  │
  ├── PR #10  Stage 3 trend/carry         cursor/chan-stage3-trend-carry-1042  (from main)
@@ -86,6 +86,6 @@ A missing package is **not** a silent `synthetic_fail_closed` pass. The harness 
 bash research/run_chan_research_tests.sh
 ```
 
-Observed after Stage 1 `d2b3218` refresh: **322 passed** (65+33+58+66+54+46) and `CHAN_HARNESS_OK` with all five `adapter_mode: native`.
+Observed after Stage 1 `d2b3218` + Stage 2 `55e2af7` + Stage 4 `75146a5` refresh: totals recorded after the native suite run.
 
 See `docs/CHAN_MORNING_TEST_PLAN.md`.

@@ -7,7 +7,11 @@ independently testable. When stacking on
 ``northstar_diagnostics`` results.
 
 If a Stage 1 result is missing or ``is_usable`` is false, the corresponding
-evidence field is left unset / unusable so the evaluator fails closed.
+evidence field is left unset so the evaluator fails closed. That includes the
+Stage 1 fail-closed cases added after ``d2b3218``: CADF ``length_mismatch`` /
+``timestamp_mismatch``, rolling pair-length mismatch, and rank-deficient
+panels (Johansen is not mapped into mean-reversion health as a healthy
+substitute).
 """
 
 from __future__ import annotations
@@ -26,19 +30,27 @@ def _get(obj: Any, name: str, default: Any = None) -> Any:
     return getattr(obj, name, default)
 
 
+def _fail_codes(result: Any) -> tuple[str, ...]:
+    flags = _get(result, "quality_flags", ()) or ()
+    codes: list[str] = []
+    for item in flags:
+        level = _get(item, "level", None)
+        value = level.value if hasattr(level, "value") else level
+        if str(value).lower() != "fail":
+            continue
+        code = _get(item, "code", "")
+        if code:
+            codes.append(str(code))
+    return tuple(codes)
+
+
 def _is_usable(result: Any) -> bool:
     if result is None:
         return False
     flag = _get(result, "is_usable", None)
     if flag is not None:
         return bool(flag)
-    flags = _get(result, "quality_flags", ()) or ()
-    for item in flags:
-        level = _get(item, "level", None)
-        value = level.value if hasattr(level, "value") else level
-        if str(value).lower() == "fail":
-            return False
-    return True
+    return not _fail_codes(result)
 
 
 def extract_break_detected(result: Any) -> bool | None:
@@ -124,13 +136,19 @@ def mean_reversion_evidence_from_stage1(
     so ``HealthMonitor`` fails closed when ``fail_closed_on_missing`` is set.
     """
 
-    results = (
-        rolling_stationarity,
-        rolling_parameter_stability,
-        structural_break,
-        half_life,
-        cadf,
-    )
+    named = {
+        "rolling_stationarity": rolling_stationarity,
+        "rolling_parameter_stability": rolling_parameter_stability,
+        "structural_break": structural_break,
+        "half_life": half_life,
+        "cadf": cadf,
+    }
+    results = tuple(named.values())
+    unusable_stage1 = {
+        name: _fail_codes(result) or ("not_usable",)
+        for name, result in named.items()
+        if result is not None and not _is_usable(result)
+    }
     stamp = _as_of_from_results(as_of, results)
     if stamp is None:
         raise ValueError("as_of is required when Stage 1 results do not carry as_of timestamps")
@@ -210,5 +228,14 @@ def mean_reversion_evidence_from_stage1(
         usable=usable,
         source="stage1_adapter",
         notes=notes,
-        extra=dict(extra or {}),
+        extra=_with_unusable_extra(extra, unusable_stage1),
     )
+
+
+def _with_unusable_extra(
+    extra: Mapping[str, object] | None, unusable_stage1: Mapping[str, tuple[str, ...]]
+) -> dict[str, object]:
+    payload = dict(extra or {})
+    if unusable_stage1:
+        payload["unusable_stage1"] = {name: list(codes) for name, codes in unusable_stage1.items()}
+    return payload

@@ -39,7 +39,7 @@ lists without that declaration. Broad universe search is out of scope.
 | Gate | Evidence | Can establish | Cannot establish |
 |---|---|---|---|
 | Economic universe | caller declaration | The group was asserted to be economically related | That the assertion is true in the real economy |
-| Market data | Stage 1 PIT prep | The window is usable and future bars were excluded | That prices are the executable NBBO |
+| Market data | Stage 1 PIT prep | The window is usable, future bars were excluded, and legs are equal-length/date-aligned | That prices are the executable NBBO. Unequal or misaligned legs are never truncated. Rank-deficient / constant / duplicate panels fail closed. |
 | Event / fundamental veto | caller flags | A supplied event/divergence flag blocked the candidate | Event detection from news, filings, or an LLM |
 | Liquidity / shortability | caller snapshots | ADV/spread/shortable flags met config | Live locates, live borrow, or broker connectivity |
 | CADF (pairs) | Stage 1 `cadf_cointegration` | Residual cointegration evidence at the configured p-value | A pairs trade after costs |
@@ -54,7 +54,9 @@ lists without that declaration. Broad universe search is out of scope.
 
 Broken cointegration is flagged when CADF passes in the first half of the window
 and fails in the second half (`BROKEN_COINTEGRATION`), in addition to full-sample
-CADF / ADF / break gates.
+CADF / ADF / break gates. Stage 1 fail-closed CADF alignment and panel-rank
+checks are inherited: mismatched lengths/timestamps map to `MISALIGNED_INPUTS`,
+and unusable panels map to `MISSING_OR_INVALID_DATA`.
 
 ## Reason codes
 
