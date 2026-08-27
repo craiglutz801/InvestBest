@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "northstar-trend-carry"
+version = "0.1.0"
+description = "NorthstarAlpha Stage 3 multi-speed trend and futures carry context (research only)."
+readme = "README.md"
+requires-python = ">=3.10"
+# New dependencies (Stage 3 research package only; not used by execution/trading code):
+# - numpy: returns, realized vol, ensemble math, synthetic fixtures
+# pytest is an optional extra. No broker SDK, no paid data client, no statsmodels.
+dependencies = [
+  "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.4"]
+# Soft Stage 1 hook: if northstar-diagnostics is installed, friction.research_edge_to_friction
+# delegates to edge_to_friction_ratio. It is NOT a required dependency.
+stage1 = ["northstar-diagnostics"]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"
