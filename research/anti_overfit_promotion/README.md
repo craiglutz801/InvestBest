@@ -59,8 +59,8 @@ and in `docs/anti_overfit_promotion.md`.
 | `cost_stress` / `execution_delay_stress` | Friction and delay vetoes |
 | `trade_pnl_concentration` | Trade/P&L concentration |
 | `evaluate_regime_slices` | Regime-slice contract |
-| `deflated_sharpe_ratio` | Bailey–López de Prado DSR |
-| `probability_of_backtest_overfitting` | CSCV PBO estimator |
+| `deflated_sharpe_ratio` | Bailey–López de Prado DSR (`trial_sharpes` / `sharpe_trials_variance` required when N>1) |
+| `probability_of_backtest_overfitting` | CSCV PBO estimator (fixed universe; no mid-CSCV drops) |
 | `kelly_ceiling` | Uncertainty-shrunk fractional-Kelly **ceiling** |
 | `evaluate_promotion` | Fail-closed decision with reason codes |
 

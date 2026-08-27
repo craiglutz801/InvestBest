@@ -137,6 +137,43 @@ class ExperimentRegistry:
         rows = self.trials if experiment_id is None else self.trials_for(experiment_id)
         return tuple(t for t in rows if t.outcome.lower() in {"fail", "failed", "reject", "rejected", "invalid"})
 
+    def trial_sharpes(
+        self,
+        experiment_id: str,
+        *,
+        metric_key: str = "sharpe",
+    ) -> tuple[tuple[float, ...] | None, tuple[QualityFlag, ...]]:
+        """Per-trial Sharpe vector for DSR ``V[{SR_n}]``. Fail-closed on gaps.
+
+        Does not drop trials with missing/non-finite Sharpes; the search
+        universe must be complete.
+        """
+        rows = self.trials_for(experiment_id)
+        if not rows:
+            return None, (
+                fail_flag(
+                    QualityCode.INSUFFICIENT_TRIALS,
+                    f"No trials recorded for experiment {experiment_id!r}.",
+                ),
+            )
+        values: list[float] = []
+        for trial in rows:
+            raw = trial.metrics.get(metric_key)
+            try:
+                val = float(raw) if raw is not None else float("nan")
+            except (TypeError, ValueError):
+                val = float("nan")
+            if val != val or val in (float("inf"), float("-inf")):
+                return None, (
+                    fail_flag(
+                        QualityCode.MISSING_TRIAL_SHARPE_DISPERSION,
+                        f"Trial {trial.trial_id!r} is missing a finite {metric_key!r} metric. "
+                        "DSR cannot estimate V[{{SR_n}}] by dropping trials.",
+                    ),
+                )
+            values.append(val)
+        return tuple(values), (ok_flag(f"Collected {len(values)} trial Sharpes from the registry."),)
+
     def winners_only_forbidden_export(self) -> tuple[TrialRecord, ...]:
         """Always returns the full ledger. Winners-only export is not provided."""
         return tuple(self.trials)

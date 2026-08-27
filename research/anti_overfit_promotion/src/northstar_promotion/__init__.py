@@ -16,7 +16,12 @@ from __future__ import annotations
 __version__ = "0.1.0"
 
 from northstar_promotion.concentration import ConcentrationReport, trade_pnl_concentration
-from northstar_promotion.dsr import DSRResult, deflated_sharpe_ratio, expected_max_sharpe
+from northstar_promotion.dsr import (
+    DSRResult,
+    cross_sectional_sharpe_variance,
+    deflated_sharpe_ratio,
+    expected_max_sharpe,
+)
 from northstar_promotion.holdout import HoldoutAudit, HoldoutContract, audit_holdout, seal_holdout
 from northstar_promotion.kelly import KellyCeilingResult, RiskCapBundle, kelly_ceiling
 from northstar_promotion.neighborhood import ParameterPoint, PlateauReport, evaluate_plateau
@@ -71,6 +76,7 @@ __all__ = [
     "WalkForwardSplit",
     "audit_holdout",
     "cost_stress",
+    "cross_sectional_sharpe_variance",
     "deflated_sharpe_ratio",
     "evaluate_plateau",
     "evaluate_promotion",
