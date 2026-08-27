@@ -37,7 +37,8 @@ export type DataQualityReason =
   | "MISSING_QUOTE"
   | "INVALID_QUOTE"
   | "STALE_QUOTE"
-  | "INCONSISTENT_QUOTE";
+  | "INCONSISTENT_QUOTE"
+  | "MISSING_QUOTE_TIMESTAMP";
 
 export type DataQualityResult =
   | { ok: true }
@@ -45,6 +46,9 @@ export type DataQualityResult =
 
 /** Feature engine needs ~22 closes; below that scores are padded/synthetic. */
 export const MIN_BARS_FOR_TRADE = 22;
+
+/** `assessMarketRegime` SMA200 window — fewer bars yield a synthetic "neutral" that must not authorize new buys. */
+export const MIN_BARS_FOR_REGIME_SMA200 = 200;
 
 /** Daily bars older than this (calendar hours) are treated as stale. Covers weekends + a US holiday. */
 export const DEFAULT_MAX_BAR_AGE_HOURS = 120;
@@ -60,6 +64,11 @@ function asDate(value: Date | string | number | null | undefined): Date | null {
 
 function isFiniteNumber(n: unknown): n is number {
   return typeof n === "number" && Number.isFinite(n);
+}
+
+/** Volume is usable for liquidity / dollar-volume features only when it is a positive finite number. */
+export function isVolumeUsable(volume: number | null | undefined): boolean {
+  return isFiniteNumber(volume) && volume > 0;
 }
 
 function ohlcFields(bar: BarLike): Array<[string, unknown]> {
@@ -131,7 +140,8 @@ export function evaluateBars(
     if (bar.volume != null && !isFiniteNumber(bar.volume)) {
       return { ok: false, reason: "NON_FINITE", detail: `Bar ${i} volume is not finite.` };
     }
-    if (bar.volume == null || (isFiniteNumber(bar.volume) && bar.volume < 0)) {
+    // Missing *or* nonpositive volume is unusable. Mapping absent volume to 0 must not look valid.
+    if (!isVolumeUsable(bar.volume)) {
       missingVolume++;
     }
   }
@@ -170,7 +180,7 @@ export function evaluateBars(
 
 export function evaluateQuote(
   quote: QuoteLike | null | undefined,
-  options?: { now?: Date; maxAgeHours?: number },
+  options?: { now?: Date; maxAgeHours?: number; requireTimestamp?: boolean },
 ): DataQualityResult {
   if (quote == null) {
     return { ok: false, reason: "MISSING_QUOTE", detail: "No quote was provided." };
@@ -197,7 +207,16 @@ export function evaluateQuote(
     return { ok: false, reason: "INCONSISTENT_QUOTE", detail: `Quote price ${quote.price} < low ${quote.low}.` };
   }
 
+  const requireTimestamp = options?.requireTimestamp !== false;
   const ts = asDate(quote.timestamp ?? quote.asOf ?? null);
+  if (requireTimestamp && !ts) {
+    return {
+      ok: false,
+      reason: "MISSING_QUOTE_TIMESTAMP",
+      detail: "Quote has no authoritative provider timestamp; freshness cannot be verified.",
+    };
+  }
+
   const now = options?.now ?? new Date();
   const maxAgeHours = options?.maxAgeHours ?? DEFAULT_MAX_QUOTE_AGE_HOURS;
   if (ts && now.getTime() - ts.getTime() > maxAgeHours * 3600_000) {
@@ -209,6 +228,17 @@ export function evaluateQuote(
   }
 
   return { ok: true };
+}
+
+/**
+ * New buys require a quality-gated benchmark series long enough to compute SMA200.
+ * A short series that classifies as "neutral" must not authorize the full buy count.
+ */
+export function canOpenNewBuysFromBenchmark(input: {
+  barQuality: DataQualityResult;
+  sma200: number | null | undefined;
+}): boolean {
+  return input.barQuality.ok && input.sma200 != null && Number.isFinite(input.sma200);
 }
 
 export function dataQualitySkipMessage(result: Extract<DataQualityResult, { ok: false }>): string {

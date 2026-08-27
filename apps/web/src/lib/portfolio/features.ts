@@ -43,7 +43,9 @@ function stdDev(values: number[]): number {
 /** Log returns from closes */
 export function computeFeatures(bars: OhlcvBar[]): { features: FeatureVector; completeness: number } {
   const closes = bars.map((b) => b.close);
-  const vols = bars.map((b) => b.volume);
+  const vols = bars.map((b) =>
+    typeof b.volume === "number" && Number.isFinite(b.volume) && b.volume > 0 ? b.volume : 0,
+  );
   if (closes.length < 22) {
     return {
       features: {

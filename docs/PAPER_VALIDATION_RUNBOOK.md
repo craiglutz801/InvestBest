@@ -47,6 +47,9 @@ Goal: prove the paper engine stays fail-closed, auditable, and single-flight und
 - Zero runs with a non-paper execution mode
 - Zero attempts to place a broker order (none exist in `apps/web`)
 - Invalid/stale input produced skip/no-trade rows, never a fill
+- SPY/benchmark series shorter than 200 bars (SMA200) produced **zero new buys**
+- Quotes without an authoritative provider timestamp were treated as stale/no-trade, not fresh
+- Missing or nonpositive volume was recorded as unusable (`PARTIAL_SERIES`), not coerced to a valid 0
 - Duplicate/concurrent triggers produced at most one trade set per hour bucket
 - Cash / position / cooldown / stop / take-profit behavior still matches shipped defaults
 - At least one sampled fill (if any trades occurred) reconstructs from persisted audit fields

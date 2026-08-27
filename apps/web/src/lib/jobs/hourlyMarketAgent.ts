@@ -49,6 +49,8 @@ import {
   evaluateBars,
   evaluateQuote,
   type DataQualityResult,
+  MIN_BARS_FOR_REGIME_SMA200,
+  canOpenNewBuysFromBenchmark,
 } from "@/lib/safety/marketDataGate";
 import { admitPaperAgentRun } from "@/lib/safety/runAdmission";
 import { hourBucketKey, shouldSkipDuplicateHourlyRun } from "@/lib/scheduler/idempotency";
@@ -275,7 +277,7 @@ async function applyLiveQuotesForHoldings(
     try {
       const q = await fetchQuoteDetail(sym, apiKey);
       const qQuality = evaluateQuote(q);
-      if (!qQuality.ok) {
+      if (!qQuality.ok || q.timestamp == null) {
         m.set(p.symbolId, "stale");
         continue;
       }
@@ -286,7 +288,7 @@ async function applyLiveQuotesForHoldings(
           symbolId: p.symbolId,
           decisionRunId: runId,
           userId,
-          timestamp: new Date(),
+          timestamp: q.timestamp,
           price: q.price,
           open: q.open,
           high: q.high,
@@ -893,7 +895,7 @@ async function hourlyMarketAgentPipeline(
             high: last?.high ?? 0,
             low: last?.low ?? 0,
             close: last?.close ?? 0,
-            volume: last?.volume ?? 0,
+            volume: last.volume,
             source: useMock ? "mock" : "twelvedata",
             interval: "1day",
           },
@@ -1393,26 +1395,27 @@ async function hourlyMarketAgentPipeline(
     }
 
     // Market regime check (soft buy throttle). SPY bars are also reused for benchmark later.
-    let spyBars: OhlcvBar[];
-    let spyQualityOk = true;
+    // SMA200 needs 200 closes; a shorter series must not fall through as "neutral" and allow full buys.
+    let spyBars: OhlcvBar[] = [];
+    let spyQuality = evaluateBars(spyBars, { minBars: MIN_BARS_FOR_REGIME_SMA200 });
     try {
-      spyBars = useMock ? mockBars("SPY") : await fetchDailySeries("SPY", apiKey, 260);
-      const spyQuality = evaluateBars(spyBars, { minBars: 50 });
+      spyBars = useMock ? mockBars("SPY", 260) : await fetchDailySeries("SPY", apiKey, 260);
+      spyQuality = evaluateBars(spyBars, { minBars: MIN_BARS_FOR_REGIME_SMA200 });
       if (!spyQuality.ok) {
-        spyQualityOk = false;
         recordDataQualitySkip(audit, { ticker: "SPY", reason: spyQuality.reason, detail: spyQuality.detail });
         await appendRunProgress(runId, "regime", `SPY data invalid — new buys blocked (${spyQuality.reason})`, spyQuality.detail);
       }
     } catch (e) {
-      spyQualityOk = false;
       const detail = e instanceof Error ? e.message : String(e);
+      spyQuality = { ok: false, reason: "MISSING_BARS", detail };
       recordDataQualitySkip(audit, { ticker: "SPY", reason: "MISSING_BARS", detail });
       await appendRunProgress(runId, "regime", "SPY data missing — new buys blocked", detail);
       spyBars = [];
     }
-    const regime = assessMarketRegime(spyQualityOk ? spyBars.map((b) => b.close) : []);
-    const regimeAllowsShort = spyQualityOk && (!shortOnlyInBearRegime || regime.regime === "bearish");
-    const regimeAdj = spyQualityOk
+    const regime = assessMarketRegime(spyQuality.ok ? spyBars.map((b) => b.close) : []);
+    const spyAllowsNewBuys = canOpenNewBuysFromBenchmark({ barQuality: spyQuality, sma200: regime.sma200 });
+    const regimeAllowsShort = spyAllowsNewBuys && (!shortOnlyInBearRegime || regime.regime === "bearish");
+    const regimeAdj = spyAllowsNewBuys
       ? regimeAdjustedMaxNew(maxNew, regime.regime, regimeFilterMode)
       : { adjusted: 0, throttled: maxNew > 0, mode: "strict" as const };
     const effectiveMaxNew = regimeAdj.adjusted;
