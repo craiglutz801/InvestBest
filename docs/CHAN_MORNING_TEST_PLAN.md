@@ -71,17 +71,17 @@ Do **not** run all six pytest directories in one invocation; several packages sh
 
 Each focused suite should pass. Stage 6 includes contract tests that fail if Stage 2–5 public functions are renamed (for example Stage 5 must export `evaluate_promotion` and `kelly_ceiling`, not `evaluate_robustness`).
 
-Observed on this integration branch (2026-08-27):
+Observed on this integration branch (2026-08-27, Stage 1 refreshed to `d2b3218`):
 
 | Suite | Passed |
 |---|---|
-| Stage 1 `research/statistical_diagnostics` | 50 |
+| Stage 1 `research/statistical_diagnostics` | 65 |
 | Stage 2 `research/mean_reversion_eligibility` | 33 |
 | Stage 3 `research/trend_carry` | 58 |
 | Stage 4 `research/edge_health` | 66 |
 | Stage 5 `research/anti_overfit_promotion` | 54 |
 | Stage 6 `research/research_loop` | 46 |
-| **Total** | **307** |
+| **Total** | **322** |
 
 A green script ends with:
 

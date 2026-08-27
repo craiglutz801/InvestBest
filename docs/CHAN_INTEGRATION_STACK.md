@@ -86,4 +86,6 @@ A missing package is **not** a silent `synthetic_fail_closed` pass. The harness 
 bash research/run_chan_research_tests.sh
 ```
 
+Observed after Stage 1 `d2b3218` refresh: **322 passed** (65+33+58+66+54+46) and `CHAN_HARNESS_OK` with all five `adapter_mode: native`.
+
 See `docs/CHAN_MORNING_TEST_PLAN.md`.
