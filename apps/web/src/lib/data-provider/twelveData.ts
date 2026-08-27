@@ -67,8 +67,50 @@ export type OhlcvBar = {
   high: number;
   low: number;
   close: number;
-  volume: number;
+  /** Positive volume when the provider supplied it; null when missing or unparsable. */
+  volume: number | null;
 };
+
+/**
+ * Preserve missing volume instead of coercing it to 0 (which used to look like a valid bar).
+ * Non-finite values are also null; a parsed 0 is kept so the quality gate can mark it unusable.
+ */
+export function parseOptionalVolume(raw: string | number | null | undefined): number | null {
+  if (raw == null) return null;
+  if (typeof raw === "string" && raw.trim() === "") return null;
+  const n = typeof raw === "number" ? raw : Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Authoritative provider quote time. Prefers unix `timestamp` (seconds or ms), then `datetime`.
+ */
+export function parseProviderTimestamp(input: {
+  timestamp?: string | number | null;
+  datetime?: string | null;
+}): Date | null {
+  const ts = input.timestamp;
+  if (typeof ts === "number" && Number.isFinite(ts) && ts > 0) {
+    const ms = ts < 1e12 ? ts * 1000 : ts;
+    const d = new Date(ms);
+    if (Number.isFinite(d.getTime())) return d;
+  }
+  if (typeof ts === "string" && ts.trim() !== "") {
+    const n = Number(ts);
+    if (Number.isFinite(n) && n > 0) {
+      const ms = n < 1e12 ? n * 1000 : n;
+      const d = new Date(ms);
+      if (Number.isFinite(d.getTime())) return d;
+    }
+    const parsed = new Date(ts);
+    if (Number.isFinite(parsed.getTime())) return parsed;
+  }
+  if (typeof input.datetime === "string" && input.datetime.trim() !== "") {
+    const parsed = new Date(input.datetime);
+    if (Number.isFinite(parsed.getTime())) return parsed;
+  }
+  return null;
+}
 
 /**
  * Fetch daily time series from Twelve Data.
@@ -125,7 +167,7 @@ export async function fetchDailySeries(
           high: Number(v.high),
           low: Number(v.low),
           close: Number(v.close),
-          volume: Number(v.volume ?? 0),
+          volume: parseOptionalVolume(v.volume),
         }))
         .sort((a, b) => a.time.getTime() - b.time.getTime());
     } catch (e) {
@@ -197,6 +239,8 @@ const richQuoteSchema = z.object({
   change: z.string().optional(),
   percent_change: z.string().optional(),
   volume: z.string().optional(),
+  datetime: z.string().optional(),
+  timestamp: z.union([z.string(), z.number()]).optional(),
   is_market_open: z.union([z.boolean(), z.number()]).optional(),
   message: z.string().optional(),
   code: z.number().optional(),
@@ -213,6 +257,8 @@ export type QuoteDetail = {
   volume: number | null;
   isRealtime: boolean;
   asOfMarketSession: string | null;
+  /** Provider-issued quote time; null when the vendor omitted a usable timestamp. */
+  timestamp: Date | null;
 };
 
 function num(s: string | undefined): number | null {
@@ -221,7 +267,7 @@ function num(s: string | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function mapQuoteDetail(symbol: string, d: z.infer<typeof richQuoteSchema>): QuoteDetail {
+export function mapQuoteDetail(symbol: string, d: z.infer<typeof richQuoteSchema>): QuoteDetail {
   if (d.message && d.code === 401) throw new Error(d.message);
 
   const priceS = d.price ?? d.close;
@@ -250,6 +296,7 @@ function mapQuoteDetail(symbol: string, d: z.infer<typeof richQuoteSchema>): Quo
     volume,
     isRealtime: Boolean(isOpen),
     asOfMarketSession: isOpen ? "regular" : "closed",
+    timestamp: parseProviderTimestamp({ timestamp: d.timestamp, datetime: d.datetime }),
   };
 }
 

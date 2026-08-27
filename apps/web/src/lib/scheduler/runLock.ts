@@ -15,6 +15,7 @@
 
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { isLockStillHeld } from "./idempotency";
 import type { RunLock, TriggerSource } from "./types";
 
 const DEFAULT_TIMEOUT_MIN = Math.max(
@@ -98,14 +99,16 @@ export async function acquireRunLock(
     return { acquired: true, lock: rowToLock(retry) };
   }
 
-  const isStillHeld = existing.status === "active" && existing.expiresAt.getTime() > now.getTime();
-  if (isStillHeld) {
+  if (isLockStillHeld(existing, now)) {
     return { acquired: false, existing: rowToLock(existing), reason: "already_active" };
   }
 
-  // Stale — steal it.
-  const stolen = await prisma.agentRunLock.update({
-    where: { lockKey },
+  // Stale — steal atomically so two concurrent recoveries cannot both win.
+  const stolenCount = await prisma.agentRunLock.updateMany({
+    where: {
+      lockKey,
+      OR: [{ status: { not: "active" } }, { expiresAt: { lte: now } }],
+    },
     data: {
       acquiredAt: now,
       expiresAt,
@@ -115,6 +118,28 @@ export async function acquireRunLock(
       triggerSource: options?.triggerSource ?? null,
     },
   });
+  if (stolenCount.count === 0) {
+    const current = await prisma.agentRunLock.findUnique({ where: { lockKey } });
+    if (current) {
+      return { acquired: false, existing: rowToLock(current), reason: "already_active" };
+    }
+    const retryAfterSteal = await prisma.agentRunLock.create({
+      data: {
+        userId,
+        lockKey,
+        acquiredAt: now,
+        expiresAt,
+        runId: options?.runId ?? null,
+        status: "active",
+        triggerSource: options?.triggerSource ?? null,
+      },
+    });
+    return { acquired: true, lock: rowToLock(retryAfterSteal) };
+  }
+  const stolen = await prisma.agentRunLock.findUnique({ where: { lockKey } });
+  if (!stolen) {
+    return { acquired: false, existing: rowToLock(existing), reason: "already_active" };
+  }
   return { acquired: true, lock: rowToLock(stolen) };
 }
 

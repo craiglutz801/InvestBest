@@ -21,6 +21,7 @@ export async function GET() {
       runFrequencyMinutes: s.runFrequencyMinutes,
       paperStartDate: s.paperStartDate?.toISOString() ?? null,
       paperEndDate: s.paperEndDate?.toISOString() ?? null,
+      agentPaused: Boolean((s as { agentPaused?: boolean }).agentPaused),
       newsEnabled: s.newsEnabled,
       shortingEnabled: s.shortingEnabled,
       defaultSlippagePct: toNum(s.defaultSlippagePct),
@@ -93,6 +94,7 @@ export async function PUT(req: Request) {
       data.paperEndDate =
         b.paperEndDate === null || b.paperEndDate === "" ? null : new Date(b.paperEndDate);
     }
+    if (b.agentPaused !== undefined) data.agentPaused = b.agentPaused;
 
     const updated = await prisma.appSettings.update({
       where: { userId: user.id },

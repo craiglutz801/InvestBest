@@ -85,6 +85,8 @@ export type RunOutcome = {
     | "skipped_market_closed"
     | "skipped_disabled"
     | "skipped_duplicate"
+    | "skipped_paused"
+    | "blocked_execution_mode"
     | "failed";
   error?: string;
   triggerSource: TriggerSource;

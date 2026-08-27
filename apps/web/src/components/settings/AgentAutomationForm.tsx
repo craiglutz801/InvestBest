@@ -146,7 +146,11 @@ export function AgentAutomationForm({ initial }: { initial: AgentScheduleInitial
       setMsg(
         data.status === "skipped_in_progress"
           ? "Skipped: an agent run is already active. Use Force to override."
-          : `Triggered (${data.status ?? "started"}).`,
+          : data.status === "skipped_paused"
+            ? "Paused: operator kill switch is on. History was not deleted."
+            : data.status === "blocked_execution_mode"
+              ? data.error ?? "Blocked: EXECUTION_MODE must be paper."
+              : `Triggered (${data.status ?? "started"}).`,
       );
       void refreshNextRun();
     } catch (err) {

@@ -16,8 +16,11 @@
  * the lock + bookkeeping around it.
  */
 
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { runHourlyMarketAgent } from "@/lib/jobs/hourlyMarketAgent";
+import { admitPaperAgentRun } from "@/lib/safety/runAdmission";
+import { defaultIdempotencyKey } from "./idempotency";
 import {
   acquireRunLock,
   attachRunIdToLock,
@@ -30,16 +33,40 @@ import {
 } from "./scheduleSettings";
 import type { RunOutcome, TriggerSource, RunMode } from "./types";
 
-function defaultIdempotencyKey(input: {
-  triggerSource: TriggerSource;
+async function loadAppSettingsForAdmission(userId: string): Promise<object | null> {
+  try {
+    return await prisma.appSettings.findUnique({ where: { userId } });
+  } catch {
+    return null;
+  }
+}
+
+async function persistAdmissionSkip(args: {
   userId: string;
-  scheduleId: string | null;
-  now: Date;
-}): string {
-  const hourBucket = input.now.toISOString().slice(0, 13);
-  if (input.triggerSource === "manual") return `manual-${input.userId}-${input.now.getTime()}`;
-  if (input.scheduleId) return `${input.userId}:${input.scheduleId}:${hourBucket}`;
-  return `${input.userId}-${hourBucket}`;
+  triggerSource: TriggerSource;
+  status: "blocked_execution_mode" | "skipped_paused";
+  reason: string;
+  detail: string;
+}): Promise<string | null> {
+  try {
+    const row = await prisma.decisionRun.create({
+      data: {
+        userId: args.userId,
+        status: args.status === "blocked_execution_mode" ? "failed" : "skipped",
+        universeSize: 0,
+        triggerSource: args.triggerSource,
+        runMode: "paper_trade",
+        notesJson: JSON.stringify({
+          progress: [],
+          error: args.detail,
+          admission: { reason: args.reason, status: args.status },
+        }),
+      },
+    });
+    return row.id;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -60,22 +87,30 @@ async function preCreateDecisionRun(args: {
 }): Promise<string> {
   const existing = await prisma.decisionRun.findUnique({ where: { idempotencyKey: args.idempotencyKey } });
   if (existing) return existing.id;
-  const created = await prisma.decisionRun.create({
-    data: {
-      userId: args.userId,
-      idempotencyKey: args.idempotencyKey,
-      status: "queued",
-      universeSize: 0,
-      triggerSource: args.triggerSource,
-      runMode: args.runMode,
-      scheduleId: args.scheduleId,
-      lockId: args.lockId,
-      strategyVersionId: args.strategyVersionId,
-      searchProfileId: args.searchProfileId,
-      notesJson: JSON.stringify({ progress: [] }),
-    },
-  });
-  return created.id;
+  try {
+    const created = await prisma.decisionRun.create({
+      data: {
+        userId: args.userId,
+        idempotencyKey: args.idempotencyKey,
+        status: "queued",
+        universeSize: 0,
+        triggerSource: args.triggerSource,
+        runMode: args.runMode,
+        scheduleId: args.scheduleId,
+        lockId: args.lockId,
+        strategyVersionId: args.strategyVersionId,
+        searchProfileId: args.searchProfileId,
+        notesJson: JSON.stringify({ progress: [] }),
+      },
+    });
+    return created.id;
+  } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+      const raced = await prisma.decisionRun.findUnique({ where: { idempotencyKey: args.idempotencyKey } });
+      if (raced) return raced.id;
+    }
+    throw e;
+  }
 }
 
 export type TriggerAgentRunInput = {
@@ -120,6 +155,33 @@ export async function triggerAgentRun(input: TriggerAgentRunInput): Promise<RunO
   const idempotencyKey =
     providedIdempotencyKey ??
     defaultIdempotencyKey({ triggerSource, userId, scheduleId, now: new Date() });
+
+  const admission = admitPaperAgentRun({
+    env: process.env,
+    settings: await loadAppSettingsForAdmission(userId),
+  });
+  if (!admission.allowed) {
+    const skipRunId = await persistAdmissionSkip({
+      userId,
+      triggerSource,
+      status: admission.status,
+      reason: admission.reason,
+      detail: admission.detail,
+    });
+    await recordScheduleRunResult(userId, {
+      runId: skipRunId,
+      status: "skipped",
+      error: admission.detail,
+    }).catch(() => undefined);
+    return {
+      runId: skipRunId,
+      status: admission.status,
+      error: admission.detail,
+      triggerSource,
+      scheduleId,
+      lockId: null,
+    };
+  }
 
   // Expire any stale "active" locks past their expiry before trying to acquire.
   // Without this, a crashed/aborted run (e.g. a `pm2 restart` mid-pipeline) wedges

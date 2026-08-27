@@ -37,6 +37,7 @@ export default async function SettingsPage() {
     staleQuoteAllowSells: s.staleQuoteAllowSells ?? false,
     paperStartDate: toLocalInput(s.paperStartDate),
     paperEndDate: toLocalInput(s.paperEndDate),
+    agentPaused: Boolean((s as { agentPaused?: boolean }).agentPaused),
     buyScoreMargin: toNum(s.buyScoreMargin),
     confidenceMarginForBuy: toNum(s.confidenceMarginForBuy),
     requireMomentumForBuy: s.requireMomentumForBuy,

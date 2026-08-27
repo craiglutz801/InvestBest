@@ -12,6 +12,8 @@ export const settingsUpdateSchema = z.object({
   runFrequencyMinutes: z.number().int().min(5).optional(),
   paperStartDate: z.union([z.string(), z.null()]).optional(),
   paperEndDate: z.union([z.string(), z.null()]).optional(),
+  /** Operator pause — blocks new runs without deleting history. */
+  agentPaused: z.boolean().optional(),
   newsEnabled: z.boolean().optional(),
   shortingEnabled: z.boolean().optional(),
   defaultSlippagePct: z.number().min(0).max(1).optional(),

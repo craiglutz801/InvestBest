@@ -26,6 +26,7 @@ export type SettingsFormValues = {
   staleQuoteAllowSells: boolean;
   paperStartDate: string;
   paperEndDate: string;
+  agentPaused: boolean;
   buyScoreMargin: number;
   confidenceMarginForBuy: number;
   requireMomentumForBuy: boolean;
@@ -104,6 +105,22 @@ export function SettingsForm({ initial }: { initial: SettingsFormValues }) {
         </CardHeader>
         <CardContent>
           <form onSubmit={save} className="grid gap-6 sm:grid-cols-2">
+            <label className="grid gap-1.5 text-sm sm:col-span-2 rounded-md border border-destructive/30 bg-destructive/5 p-3">
+              <span className="font-medium text-foreground">Pause / kill switch</span>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                Blocks every new agent run (manual and scheduled) without deleting DecisionRun, trade, or
+                position history. Emergency env equivalent: <code>AGENT_PAUSE=true</code>.
+              </p>
+              <label className="flex cursor-pointer items-center gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-border"
+                  checked={v.agentPaused}
+                  onChange={(e) => setV({ ...v, agentPaused: e.target.checked })}
+                />
+                <span>Pause agent (preserve history)</span>
+              </label>
+            </label>
             <Field
               label="Strategy mode"
               hint="Choose between the original rules engine, the alpha foundation ranker, and the new InvestBest v2 regression baseline. Regression v1 is the experimental supervised-model lane and is intended to coexist with V1 while we train and validate it."
