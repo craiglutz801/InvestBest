@@ -6,6 +6,9 @@
 
 This plan is executable against **synthetic fixtures fed into native Stage 1–5 APIs**. Anything that later needs real market or broker credentials is listed at the end and is **out of scope** for this morning pass.
 
+> **This integration checkout is NOT the merge path.**  
+> PR #12 copies Stage 1–5 *research packages* onto `cursor/chan-stage6-research-loop-6fec` so the morning harness can call typed public APIs. Owning PRs remain #4 / #11 / #10 / #13 / #14. Do **not** merge this checkout to `main`. After review, keep Stage 2–5 ownership on those draft PRs.
+
 ---
 
 ## 0. Draft PRs (do not merge)
@@ -20,14 +23,35 @@ gh pr list --state open
 | vNext architecture | — | #16 | `cursor/northstaralpha-vnext-architecture-3dfb` | docs only |
 | 1 Diagnostics | #3 | #4 | `cursor/chan-stage1-statistical-diagnostics-fd6c` @ `d2b3218` | `northstar_diagnostics` |
 | 2 Mean-reversion | #5 | #11 | `cursor/chan-stage2-mean-reversion-eligibility-7dee` @ `55e2af7` | `northstar_mean_reversion` |
-| 3 Trend + carry | #6 | #10 | `cursor/chan-stage3-trend-carry-1042` @ `30cf67e` | `northstar_trend_carry` |
+| 3 Trend + carry | #6 | #10 | `cursor/chan-stage3-trend-carry-1042` @ **`40a41e4`** | `northstar_trend_carry` |
 | 4 Edge health | #7 | #13 | `cursor/chan-stage4-edge-health-136d` @ `75146a5` | `northstar_edge_health` |
-| 5 Anti-overfit | #8 | #14 | `cursor/chan-stage5-anti-overfit-promotion-add0` @ `0c687c9` | `northstar_promotion` |
+| 5 Anti-overfit | #8 | #14 | `cursor/chan-stage5-anti-overfit-promotion-add0` @ **`4ac1fa0`** | `northstar_promotion` |
 | 6 Research loop | #9 | #12 | `cursor/chan-stage6-research-loop-6fec` | `northstar_research_loop` |
 
-PR #12 is a **temporary integration branch**: Stage 1–5 research trees are copied onto this branch so the harness can call native APIs. Heads: Stage 1 `d2b3218`, Stage 2 `55e2af7`, Stage 3 `30cf67e`, Stage 4 `75146a5`, Stage 5 `0c687c9`. That is not a merge to `main`.
+Heads copied onto this integration branch (2026-08-27 Stage 3/5 freshness pass): Stage 1 `d2b3218`, Stage 2 `55e2af7`, Stage 3 **`40a41e4`**, Stage 4 `75146a5`, Stage 5 **`4ac1fa0`**. That is a temporary assembly, **not** a merge to `main`.
 
 vNext constraint (PR #16): this research plane stays unwired to `hourlyMarketAgent` / legacy heuristic scoring.
+
+---
+
+## 0.1 Dependency / stacking map
+
+```text
+main
+ ├── PR #2   paper-only safety           (disjoint; do not touch)
+ ├── PR #16  vNext architecture          research plane unwired to hourlyMarketAgent
+ ├── PR #4   Stage 1  d2b3218            northstar_diagnostics
+ │     ├── PR #11 Stage 2  55e2af7       northstar_mean_reversion
+ │     └── PR #13 Stage 4  75146a5       northstar_edge_health
+ ├── PR #10  Stage 3  40a41e4            northstar_trend_carry
+ │           curve gap = carry; futures_roll = execution friction only
+ ├── PR #14  Stage 5  4ac1fa0            northstar_promotion
+ │           DSR N>1 requires trial_sharpes or sharpe_trials_variance
+ └── PR #12  Stage 6  (this checkout)    copies the five packages above
+                                         NOT the merge path to main
+```
+
+See `docs/CHAN_INTEGRATION_STACK.md` for the same map with native call signatures.
 
 ---
 
@@ -69,19 +93,19 @@ Do **not** run all six pytest directories in one invocation; several packages sh
 
 ### 2.1 Pytest
 
-Each focused suite should pass. Stage 6 includes contract tests that fail if Stage 2–5 public functions are renamed (for example Stage 5 must export `evaluate_promotion` and `kelly_ceiling`, not `evaluate_robustness`).
+Each focused suite should pass. Stage 6 includes contract tests that fail if Stage 2–5 public functions are renamed (for example Stage 5 must export `evaluate_promotion` and `kelly_ceiling`, not `evaluate_robustness`). Stage 5 DSR must require `trial_sharpes` or `sharpe_trials_variance` when N>1; Stage 3 `merge_roll_friction` must not treat the listed-contract curve gap as execution friction.
 
-Observed on this integration branch (2026-08-27, heads `d2b3218` / `55e2af7` / `30cf67e` / `75146a5` / `0c687c9`):
+Observed on this integration branch (2026-08-27, heads `d2b3218` / `55e2af7` / `40a41e4` / `75146a5` / `4ac1fa0`):
 
 | Suite | Passed |
 |---|---|
 | Stage 1 `research/statistical_diagnostics` | 65 |
 | Stage 2 `research/mean_reversion_eligibility` | 39 |
-| Stage 3 `research/trend_carry` | 58 |
+| Stage 3 `research/trend_carry` | 67 |
 | Stage 4 `research/edge_health` | 69 |
-| Stage 5 `research/anti_overfit_promotion` | 54 |
-| Stage 6 `research/research_loop` | 46 |
-| **Total** | **331** |
+| Stage 5 `research/anti_overfit_promotion` | 60 |
+| Stage 6 `research/research_loop` | 49 |
+| **Total** | **349** |
 
 A green script ends with:
 
@@ -112,6 +136,7 @@ Also required:
 - `"places_trade": false`
 - `"promotes_to_live": false`
 - every `discovered["1"…"5"].adapter_mode == "native"`
+- no `synthetic_fail_closed`
 - every outcome `native_sources` maps:
   - `diagnostics` → `northstar_diagnostics`
   - `eligibility` → `northstar_mean_reversion`
@@ -131,15 +156,15 @@ Observed harness on this branch: `CHAN_HARNESS_OK`, all five `adapter_mode` valu
 |---|---|
 | 1 | `cadf_cointegration(y, x)`, `edge_to_friction_ratio(edge, FrictionInputs)` |
 | 2 | `evaluate_candidate(EconomicCandidate, *, config=MeanReversionEligibilityConfig)` |
-| 3 | `evaluate_asset_trend(PriceSeries)`, `refuse_performance_sweep_selection({lookback: metric})` |
+| 3 | `evaluate_asset_trend(PriceSeries)`, `refuse_performance_sweep_selection({lookback: metric})`. Package contract: curve/basis gap is carry; `futures_roll` is execution friction only. |
 | 4 | `HealthMonitor.evaluate(MeanReversionEvidence, *, identity=StrategyIdentity)` |
-| 5 | `evaluate_promotion(PromotionEvidence, config=PromotionConfig)`, `kelly_ceiling(returns, *, caps=RiskCapBundle)` with explicit harness `risk_governor_cap`; health multiplier applied once |
+| 5 | `evaluate_promotion(PromotionEvidence, config=PromotionConfig)`, `kelly_ceiling(returns, *, caps=RiskCapBundle)` with explicit harness `risk_governor_cap`; health multiplier applied once. DSR is fed registry `trial_sharpes` from experiment return paths (no invented `sharpe_trials_variance`). |
 
 ---
 
 ## 4. What this morning pass does **not** do
 
-- Merge any Chan PR to `main`.
+- Merge any Chan PR to `main` (this checkout is **not** the merge path).
 - Deploy Vercel/Render/any host (ignore Vercel preview noise on this research-only PR).
 - Load Alpaca/IB/broker keys.
 - Activate production buy/sell rules or `hourlyMarketAgent`.
@@ -167,11 +192,12 @@ cd apps/web && npm test
 
 ## 6. Review checklist
 
-1. Draft PRs only; stacking map in `docs/CHAN_INTEGRATION_STACK.md`.
-2. Stage 6 calls native Stage 2–5 typed APIs (no `getattr` name guessing as the primary path).
-3. Good synthetic candidate can reach `shadow-ready`; bad ones cannot.
-4. Failed experiments remain in the Stage 6 registry.
-5. No `live` state; no broker imports; no `hourlyMarketAgent` coupling.
-6. Paper-safety PR #2 and vNext PR #16 remain disjoint. Do not merge or deploy without explicit approval.
+1. Draft PRs only; stacking map in `docs/CHAN_INTEGRATION_STACK.md`. This checkout is **not** the merge path.
+2. Stage 6 calls native Stage 2–5 typed APIs (no `getattr` name guessing as the primary path). All adapters `native`; no `synthetic_fail_closed`.
+3. Stage 5 DSR uses real trial-Sharpe dispersion from the registry; N>1 without it fails closed.
+4. Good synthetic candidate can reach `shadow-ready`; bad ones cannot.
+5. Failed experiments remain in the Stage 6 registry.
+6. No `live` state; no broker imports; no `hourlyMarketAgent` coupling.
+7. Paper-safety PR #2 and vNext PR #16 remain disjoint. Do not merge or deploy without explicit approval.
 
 **Stop here.** Morning testing is the gate. Merge remains a separate explicit approval.

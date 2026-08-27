@@ -4,20 +4,18 @@ Overnight 2026-08-26 → morning 2026-08-27. **Draft PRs only. Do not merge. Do 
 
 This Stage 6 branch (`cursor/chan-stage6-research-loop-6fec`) is a **temporary
 integration checkout**. It copies Stage 1–5 *research packages* onto the Stage 6
-branch so adapters can call native APIs. It does **not** merge those PRs to `main`.
+branch so adapters can call native APIs. **It is not the merge path to `main`.**
 
-### Integration package heads (refreshed 2026-08-27)
+### Integration package heads (refreshed 2026-08-27 Stage 3/5 pass)
 
 | Stage | PR | Owning branch head | Copied onto Stage 6? |
 |---|---|---|---|
-| 1 | #4 | `d2b3218` Fail closed on misaligned CADF inputs and rank-deficient panels | **yes** |
-| 2 | #11 | `55e2af7` Honor Stage 1 fail-closed CADF alignment in eligibility | **yes** (refreshed this pass) |
-| 3 | #10 | `30cf67e` Add Stage 3 multi-speed trend and futures carry research module | yes (unchanged) |
-| 4 | #13 | `75146a5` Fail closed when Stage 1 CADF or pair inputs are unusable | **yes** (refreshed this pass) |
-| 5 | #14 | `0c687c9` Add Stage 5 anti-overfit promotion gates and Kelly ceiling | yes (unchanged) |
+| 1 | #4 | `d2b3218` Fail closed on misaligned CADF inputs and rank-deficient panels | yes |
+| 2 | #11 | `55e2af7` Honor Stage 1 fail-closed CADF alignment in eligibility | yes |
+| 3 | #10 | **`40a41e4`** Curve gap is carry, not execution roll friction | **yes** (this pass) |
+| 4 | #13 | `75146a5` Fail closed when Stage 1 CADF or pair inputs are unusable | yes |
+| 5 | #14 | **`4ac1fa0`** DSR SR0 uses cross-trial Sharpe variance | **yes** (this pass) |
 | 6 | #12 | this branch | — |
-
-Stage 2 `55e2af7` and Stage 4 `75146a5` honor Stage 1 `d2b3218` fail-closed CADF alignment. Copied onto this integration branch; not a merge to `main`.
 
 ```text
 main
@@ -37,18 +35,21 @@ main
  │           HealthMonitor.evaluate(evidence, *, identity=)
  │
  ├── PR #10  Stage 3 trend/carry         cursor/chan-stage3-trend-carry-1042  (from main)
- │     head 30cf67e  research/trend_carry  (northstar_trend_carry)
+ │     head 40a41e4  research/trend_carry  (northstar_trend_carry)
  │     evaluate_asset_trend(series, config=None, *, as_of=)
  │     refuse_performance_sweep_selection(lookback_to_metric)
+ │     evaluate_carry / merge_roll_friction: curve_gap is not futures_roll
  │
  ├── PR #14  Stage 5 anti-overfit        cursor/chan-stage5-anti-overfit-promotion-add0  (from main)
- │     head 0c687c9  research/anti_overfit_promotion  (northstar_promotion)
+ │     head 4ac1fa0  research/anti_overfit_promotion  (northstar_promotion)
  │     evaluate_promotion(evidence: PromotionEvidence, config=None)
  │     kelly_ceiling(returns, *, caps=)
+ │     deflated_sharpe_ratio(..., trial_sharpes= | sharpe_trials_variance=)  # required N>1
  │
  └── PR #12  Stage 6 research loop       cursor/chan-stage6-research-loop-6fec
        stacked on Stage 1, with Stage 2–5 packages checked out for integration
        adapters call the typed APIs above (no getattr-name guessing)
+       NOT the merge path to main
 ```
 
 ## Native API map used by Stage 6
@@ -60,6 +61,8 @@ main
 | 3 | `northstar_trend_carry` | `evaluate_asset_trend`, `refuse_performance_sweep_selection` | `PriceSeries` |
 | 4 | `northstar_edge_health` | `HealthMonitor.evaluate` | `MeanReversionEvidence` / `TrendEvidence`, `StrategyIdentity` |
 | 5 | `northstar_promotion` | `evaluate_promotion`, `kelly_ceiling` | `PromotionEvidence`, returns + `RiskCapBundle` |
+
+Stage 5 DSR on this harness: `promotion_bundle` records per-trial period Sharpes from experiment return paths, collects them with `ExperimentRegistry.trial_sharpes`, and passes that vector into `deflated_sharpe_ratio`. It does **not** invent `sharpe_trials_variance`. Missing dispersion fails closed.
 
 Sizing: health multiplier is applied once after `kelly_ceiling` (not also injected as `drawdown_throttle`). Missing `risk_governor_cap` returns a 0 ceiling; Stage 6 does not invent `0.2`.
 
@@ -84,8 +87,9 @@ A missing package is **not** a silent `synthetic_fail_closed` pass. The harness 
 
 ```bash
 bash research/run_chan_research_tests.sh
+python3 -m northstar_research_loop
 ```
 
-Observed after Stage 1 `d2b3218` + Stage 2 `55e2af7` + Stage 4 `75146a5` refresh: **331 passed** (65+39+58+69+54+46) and `CHAN_HARNESS_OK` with all five `adapter_mode: native`.
+Observed after Stage 3 `40a41e4` + Stage 5 `4ac1fa0` refresh: **349 passed** (65+39+67+69+60+49) and `CHAN_HARNESS_OK` with all five `adapter_mode: native`.
 
 See `docs/CHAN_MORNING_TEST_PLAN.md`.
