@@ -28,6 +28,27 @@ def _result(*, usable=True, details=None, statistics=None, pvalue=None, as_of=No
     )
 
 
+def _healthy_rest(**overrides):
+    payload = {
+        "as_of": ts(1),
+        "rolling_stationarity": _result(
+            statistics={"fraction_reject_unit_root_5pct": 1.0},
+            details={"windows": [{"adf_pvalue": 0.01, "half_life": 10.0}]},
+        ),
+        "rolling_parameter_stability": _result(details={"windows": [{"beta": 1.0, "residual_std": 0.02}]}),
+        "structural_break": _result(details={"break_detected": False}),
+        "half_life": _result(statistics={"half_life": 10.0}),
+        "cadf": _result(pvalue=0.01),
+        "formation_half_life": 10.0,
+        "formation_hedge_ratio": 1.0,
+        "formation_residual_vol": 0.02,
+        "realized_friction": 0.001,
+        "expected_friction": 0.001,
+    }
+    payload.update(overrides)
+    return payload
+
+
 def test_extract_break_detected_from_stage1_contract():
     detected = _result(details={"break_detected": True, "candidate_index": 40})
     clear = _result(details={"break_detected": False})
@@ -149,3 +170,77 @@ def test_real_stage1_diagnostic_result_if_installed():
     )
     assert extract_break_detected(result) is True
     assert result.is_usable is True
+
+
+def test_real_cadf_length_mismatch_fails_closed():
+    pytest.importorskip("northstar_diagnostics")
+    import numpy as np
+    from northstar_diagnostics.cadf import cadf_cointegration
+    from northstar_diagnostics.quality import QualityCode
+
+    rng = np.random.default_rng(21)
+    y = np.cumsum(rng.normal(size=80))
+    x = np.cumsum(rng.normal(size=50))
+    cadf = cadf_cointegration(y, x, min_obs=30)
+    assert not cadf.is_usable
+    assert any(flag.code == QualityCode.LENGTH_MISMATCH for flag in cadf.quality_flags)
+
+    evidence = mean_reversion_evidence_from_stage1(**_healthy_rest(cadf=cadf))
+    assert evidence.rolling_cadf_pvalues is None
+    assert "length_mismatch" in evidence.extra["unusable_stage1"]["cadf"]
+    snap = HealthMonitor().evaluate(evidence, identity=MR_IDENTITY)
+    assert snap.fail_closed is True
+    assert ReasonCode.MISSING_EVIDENCE in snap.reason_codes
+    assert snap.state is HealthState.PAUSED
+    assert snap.recommended_risk_multiplier == 0.0
+
+
+def test_real_cadf_timestamp_mismatch_fails_closed():
+    pytest.importorskip("northstar_diagnostics")
+    from datetime import timedelta
+
+    import numpy as np
+    from northstar_diagnostics.cadf import cadf_cointegration
+    from northstar_diagnostics.quality import QualityCode
+
+    rng = np.random.default_rng(22)
+    y = np.cumsum(rng.normal(size=80))
+    x = y + rng.normal(scale=0.2, size=80)
+    ts_y = [ts(1) + timedelta(days=i) for i in range(80)]
+    ts_x = [stamp + timedelta(days=3) for stamp in ts_y]
+    cadf = cadf_cointegration(y, x, timestamps=ts_y, x_timestamps=ts_x, min_obs=30)
+    assert not cadf.is_usable
+    assert any(flag.code == QualityCode.TIMESTAMP_MISMATCH for flag in cadf.quality_flags)
+
+    evidence = mean_reversion_evidence_from_stage1(**_healthy_rest(cadf=cadf))
+    assert evidence.rolling_cadf_pvalues is None
+    assert "timestamp_mismatch" in evidence.extra["unusable_stage1"]["cadf"]
+    snap = HealthMonitor().evaluate(evidence, identity=MR_IDENTITY)
+    assert snap.fail_closed is True
+    assert snap.state is HealthState.PAUSED
+
+
+def test_real_rolling_pair_length_mismatch_fails_closed():
+    pytest.importorskip("northstar_diagnostics")
+    import numpy as np
+    from northstar_diagnostics.quality import QualityCode
+    from northstar_diagnostics.rolling import rolling_parameter_stability
+
+    rng = np.random.default_rng(23)
+    y = np.cumsum(rng.normal(size=80))
+    x = np.cumsum(rng.normal(size=40))
+    rolling = rolling_parameter_stability(y, x, window=30, step=5, min_obs=20)
+    assert not rolling.is_usable
+    assert any(flag.code == QualityCode.LENGTH_MISMATCH for flag in rolling.quality_flags)
+
+    evidence = mean_reversion_evidence_from_stage1(
+        **_healthy_rest(rolling_parameter_stability=rolling, cadf=_result(usable=False, pvalue=0.01))
+    )
+    assert evidence.hedge_ratio is None
+    assert evidence.residual_volatility is None
+    assert "length_mismatch" in evidence.extra["unusable_stage1"]["rolling_parameter_stability"]
+    assert "cadf" in evidence.extra["unusable_stage1"]
+    snap = HealthMonitor().evaluate(evidence, identity=MR_IDENTITY)
+    assert snap.fail_closed is True
+    assert ReasonCode.MISSING_EVIDENCE in snap.reason_codes
+    assert snap.state is HealthState.PAUSED

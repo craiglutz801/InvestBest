@@ -136,6 +136,11 @@ an order.
 - `cadf.pvalue` and hedge/residual statistics
 
 Unusable Stage 1 results **omit** fields rather than treating them as healthy.
+That includes CADF `length_mismatch` / `timestamp_mismatch`, rolling pair
+length mismatch, and other `is_usable=false` diagnostics. Rank-deficient
+Johansen panels fail closed in Stage 1 and are not ingested here as a healthy
+substitute. The adapter records omitted diagnostics under
+`evidence.extra["unusable_stage1"]`.
 
 ## What Stage 4 intentionally does not do
 
