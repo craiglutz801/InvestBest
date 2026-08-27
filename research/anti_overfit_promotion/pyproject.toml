@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "northstar-promotion"
+version = "0.1.0"
+description = "NorthstarAlpha Stage 5 anti-overfit promotion gates and conservative Kelly ceiling (research only)."
+readme = "README.md"
+requires-python = ">=3.10"
+# New dependencies (Stage 5 research evaluation only; not used by execution/trading code):
+# - numpy: returns math, walk-forward slicing, CSCV combinations, concentration indices
+# - scipy: Normal CDF / PPF for Deflated Sharpe Ratio (Bailey & López de Prado)
+dependencies = [
+  "numpy>=1.26",
+  "scipy>=1.12",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.4"]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"
