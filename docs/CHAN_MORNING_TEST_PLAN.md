@@ -80,8 +80,8 @@ Observed on this integration branch (2026-08-27):
 | Stage 3 `research/trend_carry` | 58 |
 | Stage 4 `research/edge_health` | 66 |
 | Stage 5 `research/anti_overfit_promotion` | 54 |
-| Stage 6 `research/research_loop` | 44 |
-| **Total** | **305** |
+| Stage 6 `research/research_loop` | 46 |
+| **Total** | **307** |
 
 A green script ends with:
 
