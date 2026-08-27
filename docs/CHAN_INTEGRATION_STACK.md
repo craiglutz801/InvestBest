@@ -2,50 +2,68 @@
 
 Overnight 2026-08-26 → morning 2026-08-27. **Draft PRs only. Do not merge. Do not deploy.**
 
+This Stage 6 branch (`cursor/chan-stage6-research-loop-6fec`) is a **temporary
+integration checkout**. It copies Stage 1–5 *research packages* onto the Stage 6
+branch so adapters can call native APIs. It does **not** merge those PRs to `main`.
+
 ```text
 main
- ├── PR #2  paper-only safety          cursor/paper-only-safety-hardening-072f
+ ├── PR #2   paper-only safety           cursor/paper-only-safety-hardening-072f
  │     disjoint execution/admission files; authoritative for live/paper gates
  │
- └── PR #4  Stage 1 diagnostics        cursor/chan-stage1-statistical-diagnostics-fd6c
-       research/statistical_diagnostics  (northstar_diagnostics)
-       │
-       ├── Issue #5 Stage 2 eligibility     (stack on Stage 1 when the PR exists)
-       ├── PR #10 Stage 3 trend/carry       cursor/chan-stage3-trend-carry-1042
-       │     research/trend_carry (`northstar_trend_carry`) — disjoint package; Stage 6 discovers it
-       ├── Issue #7 Stage 4 edge health     (prefer Stage 1 DiagnosticResult)
-       ├── Issue #8 Stage 5 anti-overfit    (strategy-agnostic research eval)
-       └── PR Stage 6 research loop         cursor/chan-stage6-research-loop-6fec
-             stacked on Stage 1
-             adapters wrap Stages 2–5 when importable (`northstar_trend_carry` is the Stage 3 name)
-             otherwise explicit evidence + fail-closed
+ ├── PR #16  vNext architecture          cursor/northstaralpha-vnext-architecture-3dfb
+ │     docs only: research plane stays unwired to hourlyMarketAgent
+ │
+ ├── PR #4   Stage 1 diagnostics         cursor/chan-stage1-statistical-diagnostics-fd6c
+ │     research/statistical_diagnostics  (northstar_diagnostics)
+ │     ├── PR #11 Stage 2 eligibility    cursor/chan-stage2-mean-reversion-eligibility-7dee
+ │     │     research/mean_reversion_eligibility  (northstar_mean_reversion)
+ │     │     evaluate_candidate(candidate, *, config=)
+ │     └── PR #13 Stage 4 edge health    cursor/chan-stage4-edge-health-136d
+ │           research/edge_health  (northstar_edge_health)
+ │           HealthMonitor.evaluate(evidence, *, identity=)
+ │
+ ├── PR #10  Stage 3 trend/carry         cursor/chan-stage3-trend-carry-1042  (from main)
+ │     research/trend_carry  (northstar_trend_carry)
+ │     evaluate_asset_trend(series, config=None, *, as_of=)
+ │     refuse_performance_sweep_selection(lookback_to_metric)
+ │
+ ├── PR #14  Stage 5 anti-overfit        cursor/chan-stage5-anti-overfit-promotion-add0  (from main)
+ │     research/anti_overfit_promotion  (northstar_promotion)
+ │     evaluate_promotion(evidence: PromotionEvidence, config=None)
+ │     kelly_ceiling(returns, *, caps=)
+ │
+ └── PR #12  Stage 6 research loop       cursor/chan-stage6-research-loop-6fec
+       stacked on Stage 1, with Stage 2–5 packages checked out for integration
+       adapters call the typed APIs above (no getattr-name guessing)
 ```
 
-## File ownership (avoid overlap)
+## Native API map used by Stage 6
 
-| Area | Owner |
+| Stage | Package | Function Stage 6 calls | Input type |
+|---|---|---|---|
+| 1 | `northstar_diagnostics` | `cadf_cointegration`, `edge_to_friction_ratio` | series + `FrictionInputs` |
+| 2 | `northstar_mean_reversion` | `evaluate_candidate` | `EconomicCandidate`, `MeanReversionEligibilityConfig` |
+| 3 | `northstar_trend_carry` | `evaluate_asset_trend`, `refuse_performance_sweep_selection` | `PriceSeries` |
+| 4 | `northstar_edge_health` | `HealthMonitor.evaluate` | `MeanReversionEvidence` / `TrendEvidence`, `StrategyIdentity` |
+| 5 | `northstar_promotion` | `evaluate_promotion`, `kelly_ceiling` | `PromotionEvidence`, returns + `RiskCapBundle` |
+
+A missing package is **not** a silent `synthetic_fail_closed` pass. The harness calls `require_native_stages()` and fails.
+
+## File ownership
+
+| Area | Owner PR |
 |---|---|
-| `apps/web/src/lib/safety/**`, `hourlyMarketAgent.ts`, settings/prisma execution mode | PR #2 |
-| `research/statistical_diagnostics/**`, `docs/statistical_diagnostics.md` | PR #4 / Stage 1 |
-| Mean-reversion eligibility package (not yet imported here by name) | Stage 2 |
-| Trend/carry research package `research/trend_carry/**`, `docs/trend_carry.md` | PR #10 / Stage 3 |
-| Health snapshot package | Stage 4 |
-| DSR/PBO/Kelly-ceiling package | Stage 5 |
-| `research/research_loop/**`, `docs/CHAN_MORNING_TEST_PLAN.md`, this file, `research/run_chan_research_tests.sh` | Stage 6 |
+| `apps/web` safety / `hourlyMarketAgent.ts` | #2 (untouched) |
+| `research/statistical_diagnostics/**` | #4 |
+| `research/mean_reversion_eligibility/**` | #11 |
+| `research/trend_carry/**` | #10 |
+| `research/edge_health/**` | #13 |
+| `research/anti_overfit_promotion/**` | #14 |
+| `research/research_loop/**`, `docs/CHAN_*.md`, `research/run_chan_research_tests.sh` | #12 |
+| `docs/NORTHSTARALPHA_VNEXT_ARCHITECTURE.md` | #16 |
 
-Stage 3 PR #10 also edits `research/README.md`. This Stage 6 branch edits the same file to point at the research loop. Morning rebase/stack should keep **both** bullets (`trend_carry/` and `research_loop/`). Do not drop either package.
-
-## Rebase rule
-
-When Stages 2–5 draft branches exist:
-
-1. Fetch the branch.
-2. If Stage 6 needs a native wrapper, add the real import name to
-   `northstar_research_loop.adapters.discovery.STAGE_CANDIDATES`.
-3. Map native decision objects in the corresponding `adapters/stageN.py`.
-4. Do not duplicate formulas that already live in that PR.
-
-Until those packages are importable, `discover_stage(n).adapter_mode == "synthetic_fail_closed"` and the pipeline requires explicit evidence records.
+`research/README.md` is the only shared file; this integration branch keeps bullets for all six packages.
 
 ## Test command
 
@@ -53,4 +71,4 @@ Until those packages are importable, `discover_stage(n).adapter_mode == "synthet
 bash research/run_chan_research_tests.sh
 ```
 
-See `docs/CHAN_MORNING_TEST_PLAN.md` for expected JSON and the credentials that must **not** be used this morning.
+See `docs/CHAN_MORNING_TEST_PLAN.md`.

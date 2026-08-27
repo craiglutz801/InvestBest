@@ -1,33 +1,19 @@
-"""Stage 3 trend/carry adapter.
+"""Stage 3 trend/carry adapter — explicit northstar_trend_carry API.
 
-Wraps native `northstar_trend_carry` (draft PR #10) when importable:
-AssetTrendSignal, evaluate_asset_trend, refuse_performance_sweep_selection.
-Does not reimplement the multi-speed ensemble or futures carry math.
+Calls ``evaluate_asset_trend(series, config=..., *, as_of=...)`` and, when a
+lookback→metric table is supplied, ``refuse_performance_sweep_selection``.
 """
 
 from __future__ import annotations
 
 from typing import Any, Mapping
 
-from northstar_research_loop.adapters.discovery import native_module
 from northstar_research_loop.contracts import TrendCarryContext
 
 
-def _horizon_names(payload: Any) -> tuple[str, ...]:
-    raw = getattr(payload, "horizons", None)
-    if raw is None and isinstance(payload, Mapping):
-        raw = payload.get("horizons")
+def _horizon_names(signal: Any) -> tuple[str, ...]:
     names: list[str] = []
-    for item in raw or ():
-        if isinstance(item, str):
-            names.append(item)
-            continue
-        if isinstance(item, Mapping):
-            nested = item.get("horizon") or item
-            name = nested.get("name") if isinstance(nested, Mapping) else None
-            if name:
-                names.append(str(name))
-            continue
+    for item in getattr(signal, "horizons", ()) or ():
         spec = getattr(item, "horizon", None)
         name = getattr(spec, "name", None) or getattr(item, "name", None)
         if name:
@@ -37,102 +23,98 @@ def _horizon_names(payload: Any) -> tuple[str, ...]:
 
 class Stage3TrendCarryAdapter:
     def __init__(self) -> None:
-        self.module = native_module(3)
+        try:
+            from northstar_trend_carry import (
+                EnsembleConfig,
+                PriceSeries,
+                evaluate_asset_trend,
+                refuse_performance_sweep_selection,
+            )
+        except ImportError:
+            self.evaluate_asset_trend = None
+            self.refuse_performance_sweep_selection = None
+            self.PriceSeries = None
+            self.EnsembleConfig = None
+            self.source_package = None
+        else:
+            self.evaluate_asset_trend = evaluate_asset_trend
+            self.refuse_performance_sweep_selection = refuse_performance_sweep_selection
+            self.PriceSeries = PriceSeries
+            self.EnsembleConfig = EnsembleConfig
+            self.source_package = "northstar_trend_carry"
 
     def evaluate(self, evidence: Mapping[str, Any]) -> TrendCarryContext:
-        explicit = evidence.get("trend")
-        native = self.module
-        source = native.__name__ if native is not None else None
-
-        if native is not None and explicit is None:
-            series = evidence.get("price_series") or evidence.get("prices")
-            evaluate_asset_trend = getattr(native, "evaluate_asset_trend", None)
-            if series is not None and callable(evaluate_asset_trend):
-                try:
-                    signal = evaluate_asset_trend(series, as_of=evidence.get("as_of"))
-                    return self._wrap(signal, source)
-                except Exception as exc:  # fail closed; do not invent a trend pass
-                    return TrendCarryContext(
-                        usable=False,
-                        reason_codes=("trend.native_evaluate_failed",),
-                        source_package=source,
-                        details={"error": str(exc)},
-                    )
-            sweep = evidence.get("performance_sweep")
-            refuse = getattr(native, "refuse_performance_sweep_selection", None)
-            if sweep is not None and callable(refuse):
-                refusal = refuse(sweep)
-                return self._wrap(refusal, source)
-
-        if explicit is None:
+        if self.evaluate_asset_trend is None:
             family = str(evidence.get("family") or "")
             if family in {"trend", "futures_carry", "trend_carry"}:
                 return TrendCarryContext(
                     usable=False,
-                    reason_codes=("trend.missing_stage3_fail_closed",),
-                    source_package=source,
+                    reason_codes=("trend.stage3_unavailable_fail_closed",),
+                    source_package=None,
                 )
             return TrendCarryContext(
-                usable=True,
-                reason_codes=("trend.not_required_for_family",),
-                chose_single_optimized_horizon=False,
-                source_package=source,
-            )
-        return self._wrap(explicit, source or "explicit_evidence")
-
-    @staticmethod
-    def _wrap(payload: Any, source: str | None) -> TrendCarryContext:
-        if isinstance(payload, TrendCarryContext):
-            return payload
-
-        data = dict(payload) if isinstance(payload, Mapping) else {}
-        refuses = bool(
-            data.get("refuses_single_horizon_selection")
-            or getattr(payload, "refuses_single_horizon_selection", False)
-        )
-        selected = data.get("selected_lookback", getattr(payload, "selected_lookback", None))
-        chose_single = bool(
-            data.get("chose_single_optimized_horizon")
-            or getattr(payload, "chose_single_optimized_horizon", False)
-            or (selected is not None and not refuses)
-        )
-        if hasattr(payload, "is_usable"):
-            usable = bool(payload.is_usable) and not chose_single
-        elif "usable" in data:
-            usable = bool(data.get("usable")) and not chose_single
-        elif "is_usable" in data:
-            usable = bool(data.get("is_usable")) and not chose_single
-        else:
-            usable = (not chose_single) and (
-                getattr(payload, "ensemble_strength", data.get("ensemble_strength")) is not None
-                or bool(data)
+                usable=False,
+                reason_codes=("trend.stage3_unavailable_fail_closed",),
+                source_package=None,
             )
 
-        reasons = tuple(data.get("reason_codes") or ())
+        series = evidence.get("price_series")
+        if series is None:
+            # Mean-reversion families still must invoke Stage 3 on this integration
+            # branch when a series is provided. Missing series is fail-closed so
+            # the harness cannot silently skip native Stage 3.
+            return TrendCarryContext(
+                usable=False,
+                reason_codes=("trend.missing_price_series_fail_closed",),
+                source_package=self.source_package,
+            )
+
+        if self.PriceSeries is not None and not isinstance(series, self.PriceSeries):
+            return TrendCarryContext(
+                usable=False,
+                reason_codes=("trend.series_not_price_series",),
+                source_package=self.source_package,
+            )
+
+        config = evidence.get("trend_config")
+        signal = self.evaluate_asset_trend(
+            series,
+            config,
+            as_of=evidence.get("as_of"),
+        )
+
+        chose_single = False
+        sweep = evidence.get("performance_sweep")
+        details: dict[str, Any] = {"native": signal.to_dict() if hasattr(signal, "to_dict") else {}}
+        details["is_order"] = False
+        details["wired_to_live_portfolio_engine"] = False
+        details["chose_single_optimized_horizon"] = False
+        if sweep is not None and self.refuse_performance_sweep_selection is not None:
+            refusal = self.refuse_performance_sweep_selection(sweep)
+            details["sweep_refusal"] = refusal.to_dict() if hasattr(refusal, "to_dict") else {}
+            if getattr(refusal, "selected_lookback", None) is not None:
+                chose_single = True
+
+        usable = bool(getattr(signal, "is_usable", False)) and not chose_single
+        reasons: tuple[str, ...]
         if chose_single:
-            usable = False
-            reasons = tuple(dict.fromkeys((*reasons, "trend.single_optimized_horizon_forbidden")))
-        elif refuses:
-            reasons = tuple(dict.fromkeys((*reasons, "trend.refuses_single_horizon_selection")))
-        if not reasons:
-            reasons = ("trend.ok",) if usable else ("trend.unusable",)
+            reasons = ("trend.single_optimized_horizon_forbidden",)
+        elif usable:
+            reasons = ("trend.ok",)
+        else:
+            reasons = ("trend.unusable",)
 
-        agreement = data.get("horizon_agreement")
-        if agreement is None:
-            agreement = getattr(payload, "horizon_agreement", None)
-
-        details = dict(data.get("details") or {})
-        if hasattr(payload, "to_dict"):
-            details.setdefault("native", payload.to_dict())
-        details.setdefault("is_order", False)
-        details.setdefault("wired_to_live_portfolio_engine", False)
+        agreement = None
+        health = evidence.get("trend_health")
+        if health is not None:
+            agreement = getattr(health, "horizon_agreement", None)
 
         return TrendCarryContext(
             usable=usable,
             reason_codes=reasons,
-            horizons=_horizon_names(payload) or tuple(data.get("horizons") or ()),
+            horizons=_horizon_names(signal),
             horizon_agreement=agreement,
             chose_single_optimized_horizon=chose_single,
-            source_package=source,
+            source_package=self.source_package,
             details=details,
         )

@@ -1,23 +1,22 @@
 from __future__ import annotations
 
-from northstar_research_loop.adapters.discovery import discover_all, discover_stage
+from northstar_research_loop.adapters.discovery import NATIVE_MODULES, discover_all, discover_stage
 from northstar_research_loop.adapters.stage2 import Stage2EligibilityAdapter
+from northstar_research_loop.adapters.stage3 import Stage3TrendCarryAdapter
 from northstar_research_loop.adapters.stage5 import Stage5RobustnessAdapter, Stage5SizingAdapter
-from northstar_research_loop.contracts import DiagnosticBundle, RobustnessDecision
+from northstar_research_loop.contracts import DiagnosticBundle
+from northstar_research_loop.native_evidence import promotion_bundle
 
 
-def test_stage1_is_discoverable_on_stacked_branch():
-    found = discover_stage(1)
-    assert found.available is True
-    assert found.module_name == "northstar_diagnostics"
-    assert found.adapter_mode == "native"
-
-
-def test_missing_later_stages_are_synthetic_fail_closed():
+def test_all_five_stages_are_native_on_integration_branch():
     snapshot = discover_all()
-    # Stages 2–5 may still be in flight; adapters must not crash.
-    for stage in (2, 3, 4, 5):
-        assert snapshot[stage].adapter_mode in {"native", "synthetic_fail_closed"}
+    for stage, name in NATIVE_MODULES.items():
+        found = snapshot[stage]
+        assert found.available is True
+        assert found.adapter_mode == "native"
+        assert found.module_name == name
+        assert discover_stage(stage).adapter_mode != "synthetic_fail_closed"
+        assert discover_stage(stage).adapter_mode != "missing"
 
 
 def test_eligibility_does_not_treat_zscore_as_formation():
@@ -36,59 +35,43 @@ def test_eligibility_does_not_treat_zscore_as_formation():
     assert decision.eligible is False
     assert "elig.zscore_ignored_before_eligibility" in decision.reason_codes
     assert decision.zscore_after_eligibility is None
+    assert decision.source_package == "northstar_mean_reversion"
 
 
-def test_overfit_and_full_kelly_are_clamped():
+def test_native_promotion_rejects_overfit_and_kelly_is_a_ceiling():
+    evidence, rets, cfg = promotion_bundle(experiment_id="adapter-overfit", overfit=True)
     robustness = Stage5RobustnessAdapter().evaluate(
-        {
-            "robustness": RobustnessDecision(
-                passed=True,
-                reason_codes=(),
-                trial_count=200,
-                plateau_stable=False,
-                holdout_contaminated=True,
-                cost_stress_failed=True,
-                delay_stress_failed=False,
-                concentration_flag=True,
-                pbo=0.9,
-                details={"concentration_veto": True},
-            )
-        }
+        {"promotion_evidence": evidence, "promotion_config": cfg}
     )
     assert robustness.passed is False
-    assert "rob.holdout_contaminated" in robustness.reason_codes
-    assert "rob.pbo_above_threshold" in robustness.reason_codes
-    assert "rob.unstable_parameter_peak" in robustness.reason_codes
+    assert robustness.source_package == "northstar_promotion"
+    assert robustness.details.get("self_promotes_to_live") is False
 
     sizing = Stage5SizingAdapter().evaluate(
         {
-            "sizing": {
-                "fractional_kelly_ceiling": 1.5,
-                "applied_caps": {"hard_risk_cap": 0.1},
-                "subordinate_to_risk_governor": True,
-            }
+            "sizing_returns": rets,
+            "sizing_caps": {
+                "risk_governor_cap": 0.1,
+                "hard_leverage_cap": 0.1,
+                "health_advisory_multiplier": 1.0,
+            },
         }
     )
     assert sizing.fractional_kelly_ceiling <= 0.1
     assert sizing.subordinate_to_risk_governor is True
-    assert any("clamped" in code or "full_kelly" in code for code in sizing.reason_codes)
+    assert sizing.source_package == "northstar_promotion"
 
 
-def test_trend_adapter_refuses_single_optimized_horizon():
-    from northstar_research_loop.adapters.stage3 import Stage3TrendCarryAdapter
+def test_trend_adapter_calls_evaluate_asset_trend_not_a_guessed_name():
+    from northstar_trend_carry.fixtures import uptrend_series
 
     ctx = Stage3TrendCarryAdapter().evaluate(
         {
             "family": "trend",
-            "trend": {
-                "usable": True,
-                "horizons": ["1m", "3m", "6m", "12m"],
-                "chose_single_optimized_horizon": True,
-                "selected_lookback": 77,
-                "reason_codes": ("trend.sweep",),
-            },
+            "price_series": uptrend_series(n=400, seed=11, symbol="UP"),
+            "performance_sweep": {21: 1.0, 63: 0.2},
         }
     )
-    assert ctx.usable is False
-    assert ctx.chose_single_optimized_horizon is True
-    assert "trend.single_optimized_horizon_forbidden" in ctx.reason_codes
+    assert ctx.source_package == "northstar_trend_carry"
+    assert ctx.chose_single_optimized_horizon is False
+    assert "1m" in ctx.horizons or len(ctx.horizons) >= 1

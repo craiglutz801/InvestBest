@@ -11,29 +11,21 @@ It does **not** place orders, mutate paper positions, call a broker, merge,
 deploy, or promote a candidate to live. RiskGovernor / paper-safety gates
 remain authoritative.
 
-## Why adapters instead of a Stage 2–5 rewrite?
+## Native Stage 1–5 APIs
 
-Issue #9 is an assembly task. Stage 1 already exists as draft PR #4
-(`northstar_diagnostics`). Stages 2–5 were still in-flight when this package
-was started, so Stage 6:
+On this integration branch the adapters call typed public functions:
 
-- **reuses** Stage 1 `DiagnosticResult` / `FrictionInputs` / EFR / structural-break contracts;
-- **wraps** later packages when they are importable (`discover_stage`);
-- **consumes explicit evidence records** and **fails closed** when a later
-  module is missing and no evidence was supplied.
+| Stage | Call |
+|---|---|
+| 1 | `cadf_cointegration`, `edge_to_friction_ratio` |
+| 2 | `evaluate_candidate(candidate, *, config=)` |
+| 3 | `evaluate_asset_trend(series, ...)`, `refuse_performance_sweep_selection` |
+| 4 | `HealthMonitor.evaluate(evidence, *, identity=)` |
+| 5 | `evaluate_promotion(evidence, config=)`, `kelly_ceiling(returns, *, caps=)` |
 
-That is not a second eligibility/health/promotion engine.
+`require_native_stages()` fails the harness if any of those packages is missing. There is no silent `synthetic_fail_closed` pass.
 
 ## Install (research environment)
-
-```bash
-python3 -m pip install -e "research/statistical_diagnostics[test]"
-python3 -m pip install -e "research/research_loop[test]"
-python3 -m pytest research/research_loop
-python3 -m northstar_research_loop
-```
-
-One-command suite (Stage 1 + Stage 6):
 
 ```bash
 bash research/run_chan_research_tests.sh

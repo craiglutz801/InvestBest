@@ -1,98 +1,104 @@
-"""Stage 4 health adapter — wrap native health snapshots or explicit evidence."""
+"""Stage 4 health adapter — explicit northstar_edge_health API.
+
+Calls ``HealthMonitor.evaluate(evidence, *, identity=...)``. Maps
+``research_retire_candidate`` onto the Stage 6 ``research_retire`` label.
+"""
 
 from __future__ import annotations
 
 from typing import Any, Mapping
 
-from northstar_research_loop.adapters.discovery import native_module
 from northstar_research_loop.contracts import HealthSnapshot, HealthStateName
 
-VALID_STATES = {"healthy", "degraded", "paused", "research_retire"}
-
-
-def _clip_multiplier(value: float) -> float:
-    if value != value or value < 0:
-        return 0.0
-    if value > 1.0:
-        return 1.0
-    return float(value)
+_STATE_MAP = {
+    "healthy": "healthy",
+    "degraded": "degraded",
+    "paused": "paused",
+    "research_retire_candidate": "research_retire",
+    "research_retire": "research_retire",
+}
 
 
 class Stage4HealthAdapter:
     def __init__(self) -> None:
-        self.module = native_module(4)
+        try:
+            from northstar_edge_health import HealthMonitor
+            from northstar_edge_health.evidence import MeanReversionEvidence, TrendEvidence
+            from northstar_edge_health.schema import StrategyIdentity
+            from northstar_edge_health.states import ReasonCode
+        except ImportError:
+            self.HealthMonitor = None
+            self.MeanReversionEvidence = None
+            self.TrendEvidence = None
+            self.StrategyIdentity = None
+            self.ReasonCode = None
+            self.source_package = None
+        else:
+            self.HealthMonitor = HealthMonitor
+            self.MeanReversionEvidence = MeanReversionEvidence
+            self.TrendEvidence = TrendEvidence
+            self.StrategyIdentity = StrategyIdentity
+            self.ReasonCode = ReasonCode
+            self.source_package = "northstar_edge_health"
 
     def evaluate(self, evidence: Mapping[str, Any]) -> HealthSnapshot:
-        explicit = evidence.get("health")
-        native = self.module
-        if native is not None:
-            for attr in ("evaluate_health", "health_snapshot", "evaluate"):
-                fn = getattr(native, attr, None)
-                if callable(fn):
-                    return self._wrap(fn(evidence), native.__name__)
-        if explicit is None:
-            if evidence.get("break_detected"):
-                return HealthSnapshot(
-                    state="paused",
-                    reason_codes=("health.structural_break_fail_closed",),
-                    advisory_risk_multiplier=0.0,
-                    break_detected=True,
-                    source_package=None,
-                )
+        if self.HealthMonitor is None:
             return HealthSnapshot(
                 state="paused",
-                reason_codes=("health.missing_stage4_fail_closed",),
+                reason_codes=("health.stage4_unavailable_fail_closed",),
                 advisory_risk_multiplier=0.0,
-                break_detected=False,
+                break_detected=bool(evidence.get("break_detected")),
                 source_package=None,
             )
-        return self._wrap(explicit, native.__name__ if native else "explicit_evidence")
 
-    @staticmethod
-    def _wrap(payload: Any, source: str | None) -> HealthSnapshot:
-        if isinstance(payload, HealthSnapshot):
-            multiplier = _clip_multiplier(payload.advisory_risk_multiplier)
-            if multiplier != payload.advisory_risk_multiplier:
-                return HealthSnapshot(
-                    state=payload.state,
-                    reason_codes=tuple(
-                        dict.fromkeys((*payload.reason_codes, "health.multiplier_clipped"))
-                    ),
-                    advisory_risk_multiplier=multiplier,
-                    break_detected=payload.break_detected,
-                    source_package=payload.source_package or source,
-                    family=payload.family,
-                    details=payload.details,
-                )
-            return payload
-        data = dict(payload) if isinstance(payload, Mapping) else {}
-        state = str(data.get("state") or "paused")
-        if state not in VALID_STATES:
-            state = "paused"
-            reasons = tuple(
-                dict.fromkeys((*(data.get("reason_codes") or ()), "health.invalid_state_fail_closed"))
+        native_evidence = evidence.get("health_evidence")
+        identity = evidence.get("health_identity")
+        if native_evidence is None or identity is None:
+            return HealthSnapshot(
+                state="paused",
+                reason_codes=("health.missing_native_evidence_fail_closed",),
+                advisory_risk_multiplier=0.0,
+                break_detected=bool(evidence.get("break_detected")),
+                source_package=self.source_package,
             )
-            multiplier = 0.0
-        else:
-            reasons = tuple(data.get("reason_codes") or ("health.ok",))
-            multiplier = _clip_multiplier(float(data.get("advisory_risk_multiplier", 0.0)))
-        break_detected = bool(data.get("break_detected"))
-        if break_detected and state == "healthy":
-            state = "paused"
-            reasons = tuple(dict.fromkeys((*reasons, "health.break_overrides_healthy")))
-            multiplier = 0.0
+
+        config = evidence.get("health_config")
+        monitor = self.HealthMonitor(config) if config is not None else self.HealthMonitor()
+        snapshot = monitor.evaluate(
+            native_evidence,
+            identity=identity,
+            history=tuple(evidence.get("health_history") or ()),
+            as_of=evidence.get("as_of"),
+        )
+        raw_state = snapshot.state.value if hasattr(snapshot.state, "value") else str(snapshot.state)
+        mapped: HealthStateName = _STATE_MAP.get(raw_state, "paused")  # type: ignore[assignment]
+        codes = tuple(
+            item.value if hasattr(item, "value") else str(item) for item in snapshot.reason_codes
+        )
+        break_value = (
+            self.ReasonCode.MR_STRUCTURAL_BREAK.value
+            if self.ReasonCode is not None
+            else "mr.structural_break"
+        )
+        break_detected = break_value in codes or bool(
+            getattr(native_evidence, "structural_break_detected", False)
+        )
+        if mapped == "healthy" and break_detected:
+            mapped = "paused"
+            codes = tuple(dict.fromkeys((*codes, "health.break_overrides_healthy")))
+        details = snapshot.to_dict() if hasattr(snapshot, "to_dict") else {}
+        details["mutates_positions"] = False
+        details["may_create_order"] = False
         return HealthSnapshot(
-            state=state,  # type: ignore[arg-type]
-            reason_codes=reasons,
-            advisory_risk_multiplier=multiplier,
+            state=mapped,
+            reason_codes=codes or ("health.ok",),
+            advisory_risk_multiplier=float(snapshot.recommended_risk_multiplier),
             break_detected=break_detected,
-            source_package=source,
-            family=data.get("family"),
-            details=dict(data.get("details") or {}),
+            source_package=self.source_package,
+            family=getattr(getattr(snapshot, "identity", None), "strategy_family", None),
+            details=details,
         )
 
     def assert_advisory_only(self, snapshot: HealthSnapshot) -> None:
-        """Health never mutates positions; multiplier is subordinate advice."""
-
         if snapshot.details.get("mutates_positions"):
             raise AssertionError("Health snapshot must not mutate positions")

@@ -31,6 +31,10 @@ from northstar_research_loop.edge_contract import (
     default_mean_reversion_contract,
     validate_edge_contract,
 )
+from northstar_research_loop.adapters.discovery import (
+    NativeStageMissingError,
+    require_native_stages,
+)
 from northstar_research_loop.harness import run_synthetic_battery
 from northstar_research_loop.pipeline import PipelineResult, ResearchLoopPipeline
 from northstar_research_loop.proposal import ResearchProposal, make_proposal, validate_proposal
@@ -61,6 +65,7 @@ __all__ = [
     "HealthSnapshot",
     "HoldingPeriod",
     "NamedRule",
+    "NativeStageMissingError",
     "PipelineResult",
     "RESEARCH_AGENT_CAPABILITY",
     "ResearchLoopPipeline",
@@ -73,6 +78,7 @@ __all__ = [
     "decide_status",
     "default_mean_reversion_contract",
     "make_proposal",
+    "require_native_stages",
     "run_synthetic_battery",
     "transition",
     "validate_edge_contract",

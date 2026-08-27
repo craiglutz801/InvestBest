@@ -159,7 +159,7 @@ def decide_status(
     health = health_state.strip().lower()
     if health in {"paused"}:
         return CandidateStatus.PAUSED, ("state.health_paused",)
-    if health in {"research_retire", "retire", "retired"}:
+    if health in {"research_retire", "research_retire_candidate", "retire", "retired"}:
         return CandidateStatus.RETIRED, ("state.health_retire",)
 
     if currently in {CandidateStatus.PROPOSED, CandidateStatus.PAUSED}:

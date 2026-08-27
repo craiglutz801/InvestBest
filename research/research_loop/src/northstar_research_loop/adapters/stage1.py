@@ -1,4 +1,4 @@
-"""Stage 1 adapter — wraps northstar_diagnostics.DiagnosticResult / EFR.
+"""Stage 1 adapter — explicit northstar_diagnostics calls.
 
 Does not reimplement ADF/CADF/Johansen/half-life/Hurst/VR/breaks.
 """
@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
 
-from northstar_research_loop.adapters.discovery import native_module
 from northstar_research_loop.contracts import DiagnosticBundle
 
 FRAGILE_EFR_DEFAULT = 2.5
@@ -81,23 +80,16 @@ def wrap_diagnostic_results(
         if diagnostic_id == "efr":
             raw = statistics.get("efr")
             efr = float(raw) if raw is not None else None
-            efr_fragile = bool(
-                efr is None or efr < float(statistics.get("fragile_below", fragile_below))
-            ) or "fragile" in interpretation
+            threshold = float(statistics.get("fragile_below", fragile_below))
+            efr_fragile = bool(efr is None or efr < threshold) or "fragile" in interpretation
             if efr_fragile:
                 reasons.append("diag.efr_fragile")
-        if diagnostic_id in {"cadf", "adf"} and item_usable and pvalue is not None:
-            if float(pvalue) < 0.05:
+        if diagnostic_id == "cadf" and item_usable and pvalue is not None:
+            if float(pvalue) < 0.05 or "reject_no_cointegration" in interpretation:
                 required_property_present = True
-        if diagnostic_id == "half_life" and item_usable:
-            half = statistics.get("half_life")
-            stats["half_life"] = half
         if details.get("break_detected") is True or statistics.get("break_detected") is True:
             break_detected = True
             reasons.append("diag.structural_break")
-        if "break" in diagnostic_id and item_usable:
-            if details.get("break_detected") is True:
-                break_detected = True
 
     missing_required = [rid for rid in required_ids if rid not in ids]
     if missing_required:
@@ -121,8 +113,14 @@ def wrap_diagnostic_results(
 
 
 class Stage1DiagnosticsAdapter:
+    """Calls northstar_diagnostics.cadf_cointegration and edge_to_friction_ratio."""
+
     def __init__(self) -> None:
-        self.module = native_module(1)
+        try:
+            import northstar_diagnostics as diagnostics
+        except ImportError:
+            diagnostics = None
+        self.module = diagnostics
 
     @property
     def source_package(self) -> str | None:
@@ -135,11 +133,11 @@ class Stage1DiagnosticsAdapter:
                 list(precomputed),
                 required_ids=tuple(evidence.get("required_ids") or ("cadf", "efr")),
                 fragile_below=float(evidence.get("fragile_below") or FRAGILE_EFR_DEFAULT),
-                source_package=self.source_package or "synthetic_fail_closed",
+                source_package=self.source_package or "missing",
             )
 
         bundle = evidence.get("diagnostic_bundle")
-        if isinstance(bundle, DiagnosticBundle):
+        if isinstance(bundle, DiagnosticBundle) and self.module is None:
             return bundle
 
         if self.module is None:
@@ -165,8 +163,7 @@ class Stage1DiagnosticsAdapter:
         as_of = evidence.get("as_of")
         results: list[Any] = []
 
-        # Residual cointegration (CADF) is the mean-reversion formation test.
-        # Do not run half-life on raw I(1) legs — that would fail-closed a valid pair.
+        # Residual cointegration is the mean-reversion formation test.
         if y is not None and x is not None:
             results.append(self.module.cadf_cointegration(y, x, as_of=as_of))
         elif y is not None:
@@ -187,8 +184,7 @@ class Stage1DiagnosticsAdapter:
                 )
             )
 
-        break_flag = evidence.get("break_detected")
-        if break_flag is True and y is not None:
+        if evidence.get("run_structural_break") is True and y is not None:
             results.append(
                 self.module.detect_structural_break(y, method="chow_ols", as_of=as_of)
             )
@@ -201,25 +197,12 @@ class Stage1DiagnosticsAdapter:
                 diagnostic_ids=(),
                 efr=None,
                 efr_fragile=True,
-                break_detected=bool(break_flag),
+                break_detected=False,
                 source_package=self.source_package,
             )
-        bundle = wrap_diagnostic_results(
+        return wrap_diagnostic_results(
             results,
             required_ids=tuple(evidence.get("required_ids") or ("cadf", "efr")),
             fragile_below=float(evidence.get("fragile_below") or FRAGILE_EFR_DEFAULT),
             source_package=self.source_package,
         )
-        if break_flag is True:
-            return DiagnosticBundle(
-                usable=bundle.usable,
-                required_property_present=bundle.required_property_present,
-                reason_codes=tuple(dict.fromkeys((*bundle.reason_codes, "diag.structural_break"))),
-                diagnostic_ids=bundle.diagnostic_ids,
-                efr=bundle.efr,
-                efr_fragile=bundle.efr_fragile,
-                break_detected=True,
-                statistics=bundle.statistics,
-                source_package=bundle.source_package,
-            )
-        return bundle

@@ -1,9 +1,9 @@
 """Normalized Stage 1–5 contracts consumed by the Stage 6 pipeline.
 
-These shapes are adapters, not reimplementations. When a later Chan package
-is importable, discovery wraps its native objects into these records. When
-it is not, callers must supply the same records explicitly — missing evidence
-fails closed.
+These shapes are adapters, not reimplementations. Stage 6 translates native
+Stage 1–5 typed objects into these records. Missing native packages or
+missing typed evidence fail closed; the harness refuses a silent
+synthetic_fail_closed fallback.
 """
 
 from __future__ import annotations

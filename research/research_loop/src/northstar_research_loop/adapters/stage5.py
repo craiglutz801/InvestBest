@@ -1,38 +1,40 @@
-"""Stage 5 robustness / conservative-sizing adapters.
+"""Stage 5 adapters — explicit northstar_promotion API.
 
-Does not reimplement DSR/PBO/Kelly math. Wraps a native Stage 5 module when
-present; otherwise consumes explicit RobustnessDecision / SizingRecommendation
-records and applies fail-closed research defaults.
+Robustness calls ``evaluate_promotion(evidence, config=...)``.
+Sizing calls ``kelly_ceiling(returns, *, caps=...)``.
 """
 
 from __future__ import annotations
 
 from typing import Any, Mapping
 
-from northstar_research_loop.adapters.discovery import native_module
 from northstar_research_loop.contracts import RobustnessDecision, SizingRecommendation
-
-DEFAULT_PBO_MAX = 0.5
-DEFAULT_MIN_TRIALS_FOR_OVERFIT_FLAG = 30
-DEFAULT_FRACTIONAL_KELLY_CAP = 0.25
 
 
 class Stage5RobustnessAdapter:
     def __init__(self) -> None:
-        self.module = native_module(5)
+        try:
+            from northstar_promotion import evaluate_promotion
+            from northstar_promotion.promotion import (
+                PromotionEvidence,
+                PromotionVerdict,
+            )
+        except ImportError:
+            self.evaluate_promotion = None
+            self.PromotionEvidence = None
+            self.PromotionVerdict = None
+            self.source_package = None
+        else:
+            self.evaluate_promotion = evaluate_promotion
+            self.PromotionEvidence = PromotionEvidence
+            self.PromotionVerdict = PromotionVerdict
+            self.source_package = "northstar_promotion"
 
     def evaluate(self, evidence: Mapping[str, Any]) -> RobustnessDecision:
-        explicit = evidence.get("robustness")
-        native = self.module
-        if native is not None:
-            for attr in ("evaluate_robustness", "promotion_decision", "evaluate"):
-                fn = getattr(native, attr, None)
-                if callable(fn):
-                    return self._wrap(fn(evidence), native.__name__)
-        if explicit is None:
+        if self.evaluate_promotion is None:
             return RobustnessDecision(
                 passed=False,
-                reason_codes=("rob.missing_stage5_fail_closed",),
+                reason_codes=("rob.stage5_unavailable_fail_closed",),
                 trial_count=0,
                 plateau_stable=False,
                 holdout_contaminated=True,
@@ -41,147 +43,151 @@ class Stage5RobustnessAdapter:
                 concentration_flag=True,
                 source_package=None,
             )
-        return self._wrap(explicit, native.__name__ if native else "explicit_evidence")
 
-    def _wrap(self, payload: Any, source: str | None) -> RobustnessDecision:
-        if isinstance(payload, RobustnessDecision):
-            decision = payload
-        else:
-            data = dict(payload) if isinstance(payload, Mapping) else {}
-            decision = RobustnessDecision(
-                passed=bool(data.get("passed")),
-                reason_codes=tuple(data.get("reason_codes") or ()),
-                trial_count=int(data.get("trial_count") or 0),
-                plateau_stable=bool(data.get("plateau_stable")),
-                holdout_contaminated=bool(data.get("holdout_contaminated")),
-                cost_stress_failed=bool(data.get("cost_stress_failed")),
-                delay_stress_failed=bool(data.get("delay_stress_failed")),
-                concentration_flag=bool(data.get("concentration_flag")),
-                deflated_sharpe=data.get("deflated_sharpe"),
-                pbo=data.get("pbo"),
-                source_package=source,
-                details=dict(data.get("details") or {}),
+        native_evidence = evidence.get("promotion_evidence")
+        if native_evidence is None:
+            return RobustnessDecision(
+                passed=False,
+                reason_codes=("rob.missing_promotion_evidence_fail_closed",),
+                trial_count=0,
+                plateau_stable=False,
+                holdout_contaminated=True,
+                cost_stress_failed=True,
+                delay_stress_failed=True,
+                concentration_flag=True,
+                source_package=self.source_package,
             )
-        reasons = list(decision.reason_codes)
-        passed = decision.passed
-        if decision.holdout_contaminated:
-            passed = False
-            reasons.append("rob.holdout_contaminated")
-        if decision.cost_stress_failed:
-            passed = False
-            reasons.append("rob.cost_stress_failed")
-        if decision.delay_stress_failed:
-            passed = False
-            reasons.append("rob.delay_stress_failed")
-        if not decision.plateau_stable:
-            passed = False
-            reasons.append("rob.unstable_parameter_peak")
-        pbo = decision.pbo
-        if pbo is not None and float(pbo) > DEFAULT_PBO_MAX:
-            passed = False
-            reasons.append("rob.pbo_above_threshold")
-        if decision.trial_count >= DEFAULT_MIN_TRIALS_FOR_OVERFIT_FLAG and not decision.plateau_stable:
-            passed = False
-            reasons.append("rob.multiple_testing_overfit")
-        if decision.concentration_flag:
-            # Surface concentration; configurable veto via evidence.
-            reasons.append("rob.concentrated_pnl")
-            if bool(decision.details.get("concentration_veto", True)):
-                passed = False
-        if passed and not reasons:
-            reasons.append("rob.ok")
+        if self.PromotionEvidence is not None and not isinstance(native_evidence, self.PromotionEvidence):
+            return RobustnessDecision(
+                passed=False,
+                reason_codes=("rob.evidence_not_promotion_evidence",),
+                trial_count=0,
+                plateau_stable=False,
+                holdout_contaminated=True,
+                cost_stress_failed=True,
+                delay_stress_failed=True,
+                concentration_flag=True,
+                source_package=self.source_package,
+            )
+
+        decision = self.evaluate_promotion(
+            native_evidence,
+            config=evidence.get("promotion_config"),
+        )
+        if self.PromotionVerdict is None:
+            return RobustnessDecision(
+                passed=False,
+                reason_codes=("rob.stage5_unavailable_fail_closed",),
+                trial_count=0,
+                plateau_stable=False,
+                holdout_contaminated=True,
+                cost_stress_failed=True,
+                delay_stress_failed=True,
+                concentration_flag=True,
+                source_package=self.source_package,
+            )
+        passed = decision.verdict is self.PromotionVerdict.ELIGIBLE_FOR_HUMAN_REVIEW
+        codes = tuple(item.value for item in decision.reason_codes)
+        details = decision.to_dict()
+        details["self_promotes_to_live"] = False
+        details["activates_trading"] = False
+        reason_blob = " ".join(codes).lower()
+        dsr = native_evidence.dsr
+        pbo = native_evidence.pbo
         return RobustnessDecision(
             passed=passed,
-            reason_codes=tuple(dict.fromkeys(reasons)),
-            trial_count=decision.trial_count,
-            plateau_stable=decision.plateau_stable,
-            holdout_contaminated=decision.holdout_contaminated,
-            cost_stress_failed=decision.cost_stress_failed,
-            delay_stress_failed=decision.delay_stress_failed,
-            concentration_flag=decision.concentration_flag,
-            deflated_sharpe=decision.deflated_sharpe,
-            pbo=decision.pbo,
-            source_package=decision.source_package or source,
-            details=decision.details,
+            reason_codes=codes or (("rob.ok",) if passed else ("rob.rejected",)),
+            trial_count=int(decision.n_trials),
+            plateau_stable="isolated_optimum" not in reason_blob,
+            holdout_contaminated="holdout" in reason_blob and "contaminat" in reason_blob,
+            cost_stress_failed="cost_stress" in reason_blob,
+            delay_stress_failed="delay_stress" in reason_blob or "execution_delay" in reason_blob,
+            concentration_flag="concentration" in reason_blob,
+            deflated_sharpe=None if dsr is None else dsr.deflated_sharpe,
+            pbo=None if pbo is None else pbo.pbo,
+            source_package=self.source_package,
+            details=details,
         )
 
 
 class Stage5SizingAdapter:
     def __init__(self) -> None:
-        self.module = native_module(5)
+        try:
+            from northstar_promotion import kelly_ceiling
+            from northstar_promotion.kelly import RiskCapBundle
+        except ImportError:
+            self.kelly_ceiling = None
+            self.RiskCapBundle = None
+            self.source_package = None
+        else:
+            self.kelly_ceiling = kelly_ceiling
+            self.RiskCapBundle = RiskCapBundle
+            self.source_package = "northstar_promotion"
 
     def evaluate(self, evidence: Mapping[str, Any]) -> SizingRecommendation:
-        explicit = evidence.get("sizing")
-        native = self.module
-        if native is not None:
-            for attr in ("kelly_ceiling", "sizing_recommendation", "fractional_kelly_ceiling"):
-                fn = getattr(native, attr, None)
-                if callable(fn):
-                    return self._wrap(fn(evidence), native.__name__)
-        if explicit is None:
+        if self.kelly_ceiling is None:
             return SizingRecommendation(
                 fractional_kelly_ceiling=0.0,
                 applied_caps={"missing_stage5": 0.0},
-                reason_codes=("size.missing_stage5_fail_closed",),
+                reason_codes=("size.stage5_unavailable_fail_closed",),
                 subordinate_to_risk_governor=True,
                 source_package=None,
             )
-        return self._wrap(explicit, native.__name__ if native else "explicit_evidence")
 
-    @staticmethod
-    def _wrap(payload: Any, source: str | None) -> SizingRecommendation:
-        if isinstance(payload, SizingRecommendation):
-            rec = payload
-        else:
-            data = dict(payload) if isinstance(payload, Mapping) else {}
-            rec = SizingRecommendation(
-                fractional_kelly_ceiling=float(data.get("fractional_kelly_ceiling") or 0.0),
-                applied_caps=dict(data.get("applied_caps") or {}),
-                reason_codes=tuple(data.get("reason_codes") or ()),
-                subordinate_to_risk_governor=bool(
-                    data.get("subordinate_to_risk_governor", True)
-                ),
-                source_package=source,
+        returns = evidence.get("sizing_returns")
+        if returns is None:
+            return SizingRecommendation(
+                fractional_kelly_ceiling=0.0,
+                applied_caps={"missing_returns": 0.0},
+                reason_codes=("size.missing_returns_fail_closed",),
+                subordinate_to_risk_governor=True,
+                source_package=self.source_package,
             )
-        ceiling = rec.fractional_kelly_ceiling
-        reasons = list(rec.reason_codes)
-        caps = dict(rec.applied_caps)
-        hard_cap = float(caps.get("hard_risk_cap", DEFAULT_FRACTIONAL_KELLY_CAP))
-        vol_cap = float(caps.get("vol_target_cap", 1.0))
-        dd_cap = float(caps.get("drawdown_cap", 1.0))
-        exposure_cap = float(caps.get("exposure_cap", 1.0))
-        liquidity_cap = float(caps.get("liquidity_cap", 1.0))
-        health_mult = float(caps.get("health_advisory_multiplier", 1.0))
-        if ceiling != ceiling or ceiling < 0:
+
+        raw_caps = dict(evidence.get("sizing_caps") or {})
+        health_mult = float(raw_caps.pop("health_advisory_multiplier", 1.0))
+        caps = None
+        if self.RiskCapBundle is not None:
+            allowed = {
+                "vol_target",
+                "asset_vol",
+                "concentration_max_weight",
+                "drawdown_throttle",
+                "exposure_cap",
+                "liquidity_cap",
+                "risk_governor_cap",
+                "hard_leverage_cap",
+            }
+            kwargs = {k: v for k, v in raw_caps.items() if k in allowed}
+            if "drawdown_throttle" not in kwargs:
+                kwargs["drawdown_throttle"] = health_mult
+            if "risk_governor_cap" not in kwargs:
+                kwargs["risk_governor_cap"] = 0.2
+            caps = self.RiskCapBundle(**kwargs)
+
+        result = self.kelly_ceiling(
+            returns,
+            fraction=float(evidence.get("kelly_fraction", 0.25)),
+            caps=caps,
+            min_obs=int(evidence.get("kelly_min_obs", 30)),
+        )
+        ceiling = float(result.ceiling)
+        if health_mult <= 0:
             ceiling = 0.0
-            reasons.append("size.invalid_ceiling_fail_closed")
-        # Never a full-Kelly target; clamp to configured fractional/hard caps.
-        for name, cap in (
-            ("hard_risk_cap", hard_cap),
-            ("vol_target_cap", vol_cap),
-            ("drawdown_cap", dd_cap),
-            ("exposure_cap", exposure_cap),
-            ("liquidity_cap", liquidity_cap),
-            ("health_advisory_multiplier", health_mult),
-            ("fractional_kelly_cap", DEFAULT_FRACTIONAL_KELLY_CAP),
-        ):
-            if ceiling > cap:
-                ceiling = cap
-                reasons.append(f"size.clamped_by_{name}")
-        if not rec.subordinate_to_risk_governor:
-            ceiling = 0.0
-            reasons.append("size.must_remain_subordinate_to_risk_governor")
-        if ceiling >= 1.0:
-            ceiling = DEFAULT_FRACTIONAL_KELLY_CAP
-            reasons.append("size.full_kelly_forbidden")
-        caps["final_ceiling"] = ceiling
-        caps["risk_governor_authoritative"] = 1.0
+        elif health_mult < 1.0:
+            ceiling = min(ceiling, ceiling * health_mult)
+        reasons = tuple(flag.code for flag in result.quality_flags)
         if not reasons:
-            reasons.append("size.ok")
+            reasons = ("size.ok",)
+        applied = dict(result.binding_caps or {})
+        applied["final_ceiling"] = ceiling
+        applied["health_advisory_multiplier"] = health_mult
+        applied["risk_governor_authoritative"] = 1.0
+        applied["role"] = result.role
         return SizingRecommendation(
-            fractional_kelly_ceiling=float(ceiling),
-            applied_caps=caps,
-            reason_codes=tuple(dict.fromkeys(reasons)),
+            fractional_kelly_ceiling=ceiling,
+            applied_caps=applied,
+            reason_codes=reasons,
             subordinate_to_risk_governor=True,
-            source_package=rec.source_package or source,
+            source_package=self.source_package,
         )

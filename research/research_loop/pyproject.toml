@@ -8,9 +8,9 @@ version = "0.1.0"
 description = "NorthstarAlpha Stage 6 bounded research-loop schemas, adapters, and synthetic harness (research/paper only)."
 readme = "README.md"
 requires-python = ">=3.10"
-# No new runtime dependencies. Stage 1 northstar-diagnostics is consumed when
-# installed from research/statistical_diagnostics; Stages 2–5 are discovered
-# via adapters when those packages exist. pytest is a test extra only.
+# Runtime depends on the assembled Chan research packages (Stages 1–5).
+# The morning harness refuses synthetic_fail_closed when any of those are missing.
+# pytest is a test extra only.
 dependencies = []
 
 [project.optional-dependencies]

@@ -81,14 +81,32 @@ def test_hourly_agent_and_rules_do_not_import_stage6():
             assert token not in text, f"{path} unexpectedly references {token}"
 
 
+def test_assembled_research_packages_do_not_import_legacy_scoring_or_agent():
+    """vNext constraint: Chan research plane stays unwired to hourlyMarketAgent."""
+
+    root = _repo_root() / "research"
+    hits: list[str] = []
+    for src in root.glob("*/src"):
+        for path in src.rglob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                names: list[str] = []
+                if isinstance(node, ast.Import):
+                    names.extend(alias.name.split(".")[0] for alias in node.names)
+                elif isinstance(node, ast.ImportFrom) and node.module:
+                    names.append(node.module.split(".")[0])
+                for name in names:
+                    if name in FORBIDDEN_IMPORT_TOKENS:
+                        hits.append(f"{path}:{name}")
+    assert hits == []
+
+
 def test_paper_safety_files_untouched_by_this_package():
     """Stage 6 must not weaken PR #2 paper-safety modules (they live on a disjoint branch)."""
 
     root = _repo_root()
     safety = root / "apps/web/src/lib/safety"
-    # Either the paper-safety PR is not on this stack, or if present it is not imported.
     src = "\n".join(p.read_text(encoding="utf-8") for p in _src_root().rglob("*.py"))
     assert "from apps.web" not in src
-    assert "hourlyMarketAgent" not in src
-    if safety.exists():
-        assert "northstar_research_loop" not in (safety / "runAdmission.ts").read_text(encoding="utf-8") if (safety / "runAdmission.ts").exists() else True
+    if safety.exists() and (safety / "runAdmission.ts").exists():
+        assert "northstar_research_loop" not in (safety / "runAdmission.ts").read_text(encoding="utf-8")

@@ -21,6 +21,7 @@ from northstar_research_loop.adapters import (
     Stage5RobustnessAdapter,
     Stage5SizingAdapter,
     discover_all,
+    require_native_stages,
 )
 from northstar_research_loop.contracts import (
     DiagnosticBundle,
@@ -92,10 +93,12 @@ class ResearchLoopPipeline:
         registry: ExperimentRegistry | None = None,
         fragile_below: float = 2.5,
         require_cost_stress: bool = True,
+        require_native: bool = False,
     ) -> None:
         self.registry = registry if registry is not None else ExperimentRegistry()
         self.fragile_below = fragile_below
         self.require_cost_stress = require_cost_stress
+        self.require_native = require_native
         self.stage1 = Stage1DiagnosticsAdapter()
         self.stage2 = Stage2EligibilityAdapter()
         self.stage3 = Stage3TrendCarryAdapter()
@@ -113,6 +116,8 @@ class ResearchLoopPipeline:
         currently: CandidateStatus = CandidateStatus.PROPOSED,
     ) -> PipelineResult:
         experiment_id = experiment_id or str(uuid4())
+        if self.require_native:
+            require_native_stages()
         gates: list[GateResult] = []
         discovered = {k: v.to_dict() for k, v in discover_all().items()}
 
@@ -201,6 +206,7 @@ class ResearchLoopPipeline:
         )
 
         trend = self.stage3.evaluate({**dict(evidence), "family": contract.strategy_family})
+        trend_required = contract.strategy_family in {"trend", "futures_carry", "trend_carry"}
         trend_pass = trend.usable and not trend.chose_single_optimized_horizon
         gates.append(
             GateResult(
@@ -209,7 +215,7 @@ class ResearchLoopPipeline:
                 reason_codes=trend.reason_codes,
                 source_package=trend.source_package,
                 details=trend.to_dict(),
-                advisory_only=contract.strategy_family == "mean_reversion",
+                advisory_only=not trend_required,
             )
         )
 
@@ -244,23 +250,9 @@ class ResearchLoopPipeline:
         )
 
         sizing_evidence = dict(evidence)
-        raw_sizing = evidence.get("sizing")
-        if isinstance(raw_sizing, SizingRecommendation):
-            applied = dict(raw_sizing.applied_caps)
-            applied["health_advisory_multiplier"] = health.advisory_risk_multiplier
-            sizing_evidence["sizing"] = SizingRecommendation(
-                fractional_kelly_ceiling=raw_sizing.fractional_kelly_ceiling,
-                applied_caps=applied,
-                reason_codes=raw_sizing.reason_codes,
-                subordinate_to_risk_governor=raw_sizing.subordinate_to_risk_governor,
-                source_package=raw_sizing.source_package,
-            )
-        elif isinstance(raw_sizing, Mapping):
-            sizing_payload = dict(raw_sizing)
-            applied = dict(sizing_payload.get("applied_caps") or {})
-            applied["health_advisory_multiplier"] = health.advisory_risk_multiplier
-            sizing_payload["applied_caps"] = applied
-            sizing_evidence["sizing"] = sizing_payload
+        caps = dict(evidence.get("sizing_caps") or {})
+        caps["health_advisory_multiplier"] = health.advisory_risk_multiplier
+        sizing_evidence["sizing_caps"] = caps
         sizing = self.stage5_size.evaluate(sizing_evidence)
         size_pass = sizing.subordinate_to_risk_governor and sizing.fractional_kelly_ceiling >= 0
         gates.append(
@@ -278,7 +270,7 @@ class ResearchLoopPipeline:
         next_status, state_reasons = decide_status(
             currently=currently,
             diagnostics_passed=diag_pass and structural_ok,
-            eligibility_passed=elig_pass and trend_pass,
+            eligibility_passed=elig_pass and (trend_pass if trend_required else True),
             after_friction_passed=after_friction.passed,
             robustness_passed=rob_pass,
             health_state=health.state,
