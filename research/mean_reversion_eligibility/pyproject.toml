@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "northstar-mean-reversion"
+version = "0.1.0"
+description = "NorthstarAlpha Stage 2 mean-reversion eligibility engine (research/shadow only)."
+readme = "README.md"
+requires-python = ">=3.10"
+# Stage 2 depends on Stage 1 (`northstar-diagnostics`) which must be installed
+# from this repo (`pip install -e research/statistical_diagnostics`). No new
+# third-party libraries are added beyond Stage 1's numpy/scipy/statsmodels.
+dependencies = [
+  "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.4"]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "../statistical_diagnostics/src", "tests"]
+addopts = "-q"

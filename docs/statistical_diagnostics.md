@@ -128,3 +128,11 @@ fails closed.
 - Live trading
 - Changes to `hourlyMarketAgent`, buy/sell rules, or paper-safety gates
 - Stage 2 mean-reversion eligibility engine
+- Stage 4 health-state emission (see `docs/edge_health.md`; Stage 4 consumes this contract via an adapter and must not place orders either)
+
+## Stage 4 consumer
+
+Stage 4 (`research/edge_health/`) may read `details.break_detected` and rolling
+window statistics as **inputs** to a deterministic health monitor. That consumer
+is research/shadow only: it may recommend a bounded risk multiplier but cannot
+create an order, mutate positions, or bypass a RiskGovernor.
