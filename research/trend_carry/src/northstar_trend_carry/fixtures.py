@@ -168,6 +168,55 @@ def synthetic_futures_chain(
     return ContractChain(root=root, observations=tuple(observations))
 
 
+def two_leg_chain(
+    *,
+    root: str = "ES",
+    front_price: float = 100.0,
+    next_price: float = 105.0,
+    as_of: datetime | None = None,
+    front_timestamp: datetime | None = None,
+    next_timestamp: datetime | None = None,
+    front_root: str | None = None,
+    next_root: str | None = None,
+    front_bid: float | None = None,
+    front_ask: float | None = None,
+    next_bid: float | None = None,
+    next_ask: float | None = None,
+    front_expiry: date = date(2024, 3, 15),
+    next_expiry: date = date(2024, 6, 14),
+) -> ContractChain:
+    """Minimal two-contract chain for carry / friction / freshness tests."""
+
+    ts = as_of or datetime(2024, 1, 20, tzinfo=timezone.utc)
+    front_obs = FuturesContractObservation(
+        contract_symbol=f"{root}{front_expiry.strftime('%y%m')}",
+        root=front_root if front_root is not None else root,
+        expiry=front_expiry,
+        price=front_price,
+        timestamp=front_timestamp or ts,
+        bid=front_bid,
+        ask=front_ask,
+        multiplier=50.0,
+        settlement_type="settle",
+        exchange="SYN",
+        currency="USD",
+    )
+    next_obs = FuturesContractObservation(
+        contract_symbol=f"{root}{next_expiry.strftime('%y%m')}",
+        root=next_root if next_root is not None else root,
+        expiry=next_expiry,
+        price=next_price,
+        timestamp=next_timestamp or ts,
+        bid=next_bid,
+        ask=next_ask,
+        multiplier=50.0,
+        settlement_type="settle",
+        exchange="SYN",
+        currency="USD",
+    )
+    return ContractChain(root=root, observations=(front_obs, next_obs))
+
+
 def expired_only_chain(root: str = "XX") -> ContractChain:
     ts = datetime(2024, 6, 1, tzinfo=timezone.utc)
     obs = FuturesContractObservation(

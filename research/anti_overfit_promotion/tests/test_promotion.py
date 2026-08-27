@@ -43,9 +43,11 @@ def _plateau_spike() -> object:
     return evaluate_plateau(points, selected_trial_id="p5", radius=0.3, min_neighbors=2)
 
 
-def _registry(n_trials: int, experiment_id: str = "exp") -> ExperimentRegistry:
+def _registry(n_trials: int, experiment_id: str = "exp", sharpes: list[float] | None = None) -> ExperimentRegistry:
     reg = ExperimentRegistry()
     reg.register_experiment(experiment_id, strategy_family="toy")
+    if sharpes is None:
+        sharpes = [0.05 + 0.02 * float(i) for i in range(n_trials)]
     for i in range(n_trials):
         outcome = "fail" if i < n_trials - 1 else "pass"
         reg.record_trial(
@@ -54,6 +56,7 @@ def _registry(n_trials: int, experiment_id: str = "exp") -> ExperimentRegistry:
             strategy_family="toy",
             parameters={"lookback": float(i + 1)},
             outcome=outcome,
+            metrics={"sharpe": float(sharpes[i])},
         )
     return reg
 
@@ -71,7 +74,12 @@ def _passing_bundle(n_trials: int = 3):
     # Windows were None so they do not touch holdout; used_holdout defaults False.
     splits, sflags = walk_forward_splits(contract.research.length, train_size=40, test_size=10, step=10, min_folds=3)
     wf = evaluate_walk_forward(splits, [0.2] * len(splits), min_oos_score=0.0, split_flags=sflags)
-    dsr = deflated_sharpe_ratio(rets, n_trials=n_trials)
+    trial_sharpes, _ = reg.trial_sharpes("exp")
+    dsr = deflated_sharpe_ratio(
+        rets,
+        n_trials=n_trials,
+        trial_sharpes=trial_sharpes if n_trials > 1 else None,
+    )
     pbo = probability_of_backtest_overfitting(
         noisy_edge_matrix(240, 4, edge_mu=0.03, seed=9), n_slices=6
     )
@@ -120,7 +128,8 @@ def test_passing_gates_are_human_review_not_self_promotion():
 def test_multiple_trials_reduce_promotion_confidence_and_can_veto_dsr():
     rets = iid_normal(250, mu=0.0008, sigma=0.01, seed=3)
     dsr_few = deflated_sharpe_ratio(rets, n_trials=1)
-    dsr_many = deflated_sharpe_ratio(rets, n_trials=400)
+    many_sharpes = np.random.default_rng(3).normal(0.0, 0.08, size=400)
+    dsr_many = deflated_sharpe_ratio(rets, n_trials=400, trial_sharpes=many_sharpes)
     assert dsr_few.deflated_sharpe > dsr_many.deflated_sharpe
     assert dsr_few.deflated_sharpe >= 0.85
     assert dsr_many.deflated_sharpe < 0.85
@@ -130,7 +139,7 @@ def test_multiple_trials_reduce_promotion_confidence_and_can_veto_dsr():
     few = PromotionEvidence(
         **{**few.__dict__, "dsr": dsr_few, "registry": _registry(1), "candidate_trial_id": "t0"}
     )
-    many_reg = _registry(400)
+    many_reg = _registry(400, sharpes=list(many_sharpes))
     many = PromotionEvidence(
         **{**few.__dict__, "dsr": dsr_many, "registry": many_reg, "candidate_trial_id": "t399", "experiment_id": "exp"}
     )

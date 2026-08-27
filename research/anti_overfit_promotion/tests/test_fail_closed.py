@@ -22,6 +22,7 @@ def test_nan_returns_fail_closed_across_modules():
 
 def test_empty_and_short_samples_fail_closed():
     assert not deflated_sharpe_ratio([], n_trials=1).is_usable
+    assert not deflated_sharpe_ratio(np.ones(80), n_trials=4).is_usable
     assert not kelly_ceiling([0.01], min_obs=30).is_usable
     splits, flags = walk_forward_splits(10, train_size=8, test_size=5, min_folds=2)
     assert splits == ()

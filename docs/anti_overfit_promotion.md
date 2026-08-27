@@ -32,25 +32,36 @@ DSR/PBO use **per-period** Sharpe. Do not mix annualized Sharpe into DSR.
 
 ### Deflated Sharpe Ratio (Bailey & López de Prado, 2014)
 
+Two **different** variance quantities:
+
+1. `V[{SR_n}]` — cross-sectional variance of Sharpe ratios **across tried
+   trials**. This scales the False Strategy expected-max threshold `SR0`.
+2. The selected strategy's skew/kurtosis sampling-error term — this is the
+   PSR/DSR **denominator only**. It is never used as `V[{SR_n}]`.
+
 ```text
 denom = sqrt(1 - γ3 * SR_hat + ((γ4 - 1) / 4) * SR_hat^2)
-V[SR] = denom^2 / (n - 1)
-SR0   = sqrt(V[SR]) * [(1-γ) Φ^{-1}(1 - 1/N) + γ Φ^{-1}(1 - 1/(N e))]
-DSR   = Φ[ (SR_hat - SR0) * sqrt(n - 1) / denom ]
+V[{SR_n}] = Var(trial Sharpes)   # ddof=1, or explicit sharpe_trials_variance
+SR0   = sqrt(V[{SR_n}]) * [(1-γ) Φ^{-1}(1 - 1/N) + γ Φ^{-1}(1 - 1/(N e))]
+DSR   = Φ[ (SR_hat - SR0) * sqrt(n_obs - 1) / denom ]
 ```
 
-- γ3 = sample skewness, γ4 = Pearson kurtosis (normal = 3)
+API: `deflated_sharpe_ratio(returns, n_trials, *, trial_sharpes=..., sharpe_trials_variance=...)`.
+For `n_trials > 1`, one of `trial_sharpes` (length `N`, all finite) or
+`sharpe_trials_variance` is required. Missing dispersion is fail-closed.
+`returns + n_trials` alone is not enough to compute `SR0`.
+
+- γ3 = sample skewness, γ4 = Pearson kurtosis (normal = 3) of the **selected** series
 - γ = Euler–Mascheroni constant ≈ 0.5772156649
-- N = trial count (independent-trials assumption)
+- N = trial count
 - For N = 1, SR0 is defined as 0 so DSR reduces to PSR(0)
 
-**Assumptions:** trials are treated as independent (positive correlation among
-tried variants *understates* SR0); the expected-max formula is an extreme-value
-approximation (slightly biased at small N; exact E[max of two N(0,1)] =
-1/sqrt(pi) ≈ 0.564).
+**Assumptions:** given `V[{SR_n}]`, trials are treated as independent (positive
+correlation among tried variants *understates* SR0); the expected-max formula is
+an extreme-value approximation (slightly biased at small N; exact
+E[max of two N(0,1)] = 1/sqrt(pi) ≈ 0.564).
 
-More trials raise SR0 and **reduce** DSR. That is the intended multiple-testing
-penalty.
+More trials **or** wider trial-Sharpe dispersion raise SR0 and **reduce** DSR.
 
 ### Probability of Backtest Overfitting (CSCV)
 
@@ -64,10 +75,13 @@ Bailey, Borwein, López de Prado, Zhu (2014):
 5. PBO = Pr(λ < 0.5).
 
 **Assumptions:** exhaustive deterministic combinations (no random subsample);
-remainder bars dropped so T is divisible by S; at least two strategies; this is
-an estimator, not the exact probability of overfitting. Independent noise across
-strategies yields PBO around 1/2 in large samples. A slice-local spike that does
-not persist OOS yields PBO near 1.
+remainder bars dropped so T is divisible by S. The comparison universe is
+**fixed before CSCV**: columns whose full-sample Sharpe is undefined are
+excluded once and listed. Combinations do not drop strategies or skip
+undefined Sharpes — that fails closed. At least two eligible strategies;
+this is an estimator, not the exact probability of overfitting. Independent
+noise across strategies yields PBO around 1/2 in large samples. A slice-local
+spike that does not persist OOS yields PBO near 1.
 
 ### Uncertainty-shrunk fractional Kelly (ceiling)
 
@@ -146,11 +160,16 @@ Default verdict is `reject`. There is no `promote_to_paper` or `promote_to_live`
 - No point-in-time market-data vendor checks beyond index-window `as_of` /
   holdout sealing.
 - Not wired into `hourlyMarketAgent`, buy/sell rules, or any broker adapter.
+- Stage 6 draft PR #12 still calls `deflated_sharpe_ratio(returns, n_trials=N)`
+  without trial-Sharpe dispersion (`native_evidence.promotion_bundle`). That
+  caller must pass `trial_sharpes` or `sharpe_trials_variance` for `N > 1`
+  after rebasing onto this Stage 5 contract. Not patched in this PR.
 
 ## Blockers
 
-None for this draft. Live broker, production signal activation, full Kelly,
-self-promotion, merge, and deploy remain out of scope.
+None for this Stage 5 correction. Stage 6 morning harness needs a follow-on
+to supply trial-Sharpe dispersion into DSR. Live broker, production signal
+activation, full Kelly, self-promotion, merge, and deploy remain out of scope.
 
 ## Safety
 

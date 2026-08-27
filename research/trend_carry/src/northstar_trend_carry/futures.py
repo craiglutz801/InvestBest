@@ -2,21 +2,31 @@
 
 Callers supply contract observations. This package does not fetch paid futures
 data and does not place futures orders.
+
+Economics: the front/deferred **price gap is carry/curve**, not execution
+friction. Execution roll friction is estimated only from bid/ask (and remains
+unknown / caller-supplied when those fields are absent). Curve quotes must be
+fresh vs ``as_of`` and temporally aligned with each other.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Protocol, Sequence
 
 from northstar_trend_carry.quality import QualityCode, QualityLevel, flag
-from northstar_trend_carry.schema import QualityFlag, RESEARCH_ONLY_NOTE, jsonable, utcnow
+from northstar_trend_carry.schema import QualityFlag, RESEARCH_ONLY_NOTE, jsonable
 
 CARRY_ASSUMPTIONS = (
     "Roll yield uses only caller-supplied contract prices with timestamp <= as_of.",
     "Annualized roll yield ≈ (F_front / F_next - 1) * (365 / days_between_expiries).",
     "Contango (F_next > F_front) produces negative roll yield for a long; backwardation positive.",
+    "curve_gap / roll_gap is the signed relative front/deferred price gap. It is economic carry, not transaction friction.",
+    "Execution roll friction is estimated only from bid/ask half-spreads when both legs quote a book; otherwise it is unknown and must be caller-supplied.",
+    "Never copy curve_gap into Edge-to-Friction futures_roll — that double-counts carry as a cost.",
+    "Front and deferred quotes must be fresh vs as_of and aligned with each other; stale/misaligned pairs fail closed.",
+    "Observed observation.root must match ContractChain.root.",
     "Curve shape is not a trade. Carry informs research confidence and must not double-count trend.",
     "Live contract selection / roll execution is out of scope.",
 )
@@ -40,6 +50,11 @@ RECOMMENDED_REAL_DATA_FIELDS = (
     "last_trade_date",
 )
 
+DEFAULT_MAX_QUOTE_AGE = timedelta(days=3)
+DEFAULT_MAX_FRONT_NEXT_SKEW = timedelta(days=1)
+EXECUTION_FRICTION_BID_ASK = "bid_ask_half_spreads"
+EXECUTION_FRICTION_UNKNOWN = "unknown_caller_supplied"
+
 
 def _as_utc(ts: datetime) -> datetime:
     if ts.tzinfo is None:
@@ -54,11 +69,27 @@ def _as_date(value: date | datetime) -> date:
 
 
 @dataclass(frozen=True)
+class QuoteSyncConfig:
+    """Fail-closed freshness and alignment for curve quotes."""
+
+    max_quote_age: timedelta = DEFAULT_MAX_QUOTE_AGE
+    max_front_next_skew: timedelta = DEFAULT_MAX_FRONT_NEXT_SKEW
+
+    def to_dict(self) -> dict:
+        return {
+            "max_quote_age_seconds": self.max_quote_age.total_seconds(),
+            "max_front_next_skew_seconds": self.max_front_next_skew.total_seconds(),
+        }
+
+
+@dataclass(frozen=True)
 class FuturesContractObservation:
     """One point-in-time quote/settle for a listed contract.
 
     Required later for real-data shadow testing: contract_symbol, root, expiry,
     price, timestamp. Volume and open interest are recommended for roll rules.
+    Bid/ask are recommended for *execution* roll friction; they are never
+    inferred from the front/deferred settle gap.
     """
 
     contract_symbol: str
@@ -157,7 +188,14 @@ class CarrySnapshot:
     days_to_front_expiry: int | None
     roll_recommended: bool
     roll_direction: str | None
-    estimated_roll_friction: float | None
+    curve_gap: float | None
+    roll_gap: float | None
+    execution_roll_friction: float | None
+    execution_roll_friction_source: str
+    front_quote_age_seconds: float | None
+    next_quote_age_seconds: float | None
+    front_next_skew_seconds: float | None
+    quote_sync: QuoteSyncConfig
     quality_flags: tuple[QualityFlag, ...]
     notes: tuple[str, ...] = (RESEARCH_ONLY_NOTE, *CARRY_ASSUMPTIONS)
 
@@ -177,12 +215,20 @@ class CarrySnapshot:
             "days_to_front_expiry": self.days_to_front_expiry,
             "roll_recommended": self.roll_recommended,
             "roll_direction": self.roll_direction,
-            "estimated_roll_friction": jsonable(self.estimated_roll_friction),
+            "curve_gap": jsonable(self.curve_gap),
+            "roll_gap": jsonable(self.roll_gap),
+            "execution_roll_friction": jsonable(self.execution_roll_friction),
+            "execution_roll_friction_source": self.execution_roll_friction_source,
+            "front_quote_age_seconds": jsonable(self.front_quote_age_seconds),
+            "next_quote_age_seconds": jsonable(self.next_quote_age_seconds),
+            "front_next_skew_seconds": jsonable(self.front_next_skew_seconds),
+            "quote_sync": self.quote_sync.to_dict(),
             "quality_flags": [f.to_dict() for f in self.quality_flags],
             "notes": list(self.notes),
             "is_usable": self.is_usable,
             "is_order": False,
             "is_live_futures_execution": False,
+            "curve_gap_is_not_execution_friction": True,
         }
 
 
@@ -217,16 +263,136 @@ def live_quotes(
     return live
 
 
+def _finite_price(value: float) -> bool:
+    return value == value and value not in (float("inf"), float("-inf")) and value > 0
+
+
+def _age_seconds(as_of: datetime, quote: FuturesContractObservation) -> float:
+    return (_as_utc(as_of) - _as_utc(quote.timestamp)).total_seconds()
+
+
+def _root_mismatches(chain: ContractChain) -> tuple[str, ...]:
+    bad: list[str] = []
+    for obs in chain.observations:
+        if obs.root != chain.root:
+            bad.append(obs.contract_symbol)
+    return tuple(bad)
+
+
+def estimate_execution_roll_friction(
+    front: FuturesContractObservation,
+    nxt: FuturesContractObservation,
+) -> tuple[float | None, str, tuple[QualityFlag, ...]]:
+    """Half-spread crossing cost of rolling front→next. Never uses settle gap."""
+
+    flags: list[QualityFlag] = []
+    book = (front.bid, front.ask, nxt.bid, nxt.ask)
+    if any(v is None for v in book):
+        flags.append(
+            flag(
+                QualityCode.UNKNOWN_EXECUTION_FRICTION,
+                QualityLevel.WARN,
+                "Bid/ask missing on front or deferred; execution roll friction is unknown and must be caller-supplied",
+            )
+        )
+        return None, EXECUTION_FRICTION_UNKNOWN, tuple(flags)
+
+    assert front.bid is not None and front.ask is not None
+    assert nxt.bid is not None and nxt.ask is not None
+    values = (front.bid, front.ask, nxt.bid, nxt.ask)
+    if any(not _finite_price(v) for v in values):
+        flags.append(
+            flag(
+                QualityCode.NON_FINITE,
+                QualityLevel.FAIL,
+                "Bid/ask must be finite and strictly positive to estimate execution roll friction",
+            )
+        )
+        return None, EXECUTION_FRICTION_UNKNOWN, tuple(flags)
+    if front.bid > front.ask or nxt.bid > nxt.ask:
+        flags.append(
+            flag(
+                QualityCode.INVALID_INPUT,
+                QualityLevel.FAIL,
+                "Inverted bid/ask book cannot estimate execution roll friction",
+            )
+        )
+        return None, EXECUTION_FRICTION_UNKNOWN, tuple(flags)
+
+    front_mid = 0.5 * (front.bid + front.ask)
+    next_mid = 0.5 * (nxt.bid + nxt.ask)
+    friction = ((front.ask - front.bid) / (2.0 * front_mid)) + ((nxt.ask - nxt.bid) / (2.0 * next_mid))
+    return float(friction), EXECUTION_FRICTION_BID_ASK, tuple(flags)
+
+
+def _carry(
+    *,
+    as_of: datetime,
+    root: str,
+    flags: Sequence[QualityFlag],
+    quote_sync: QuoteSyncConfig,
+    front: FuturesContractObservation | None = None,
+    next_contract: FuturesContractObservation | None = None,
+    curve_state: str = "unavailable",
+    roll_yield_annualized: float | None = None,
+    days_between_expiries: int | None = None,
+    days_to_front_expiry: int | None = None,
+    roll_recommended: bool = False,
+    roll_direction: str | None = None,
+    curve_gap: float | None = None,
+    execution_roll_friction: float | None = None,
+    execution_roll_friction_source: str = EXECUTION_FRICTION_UNKNOWN,
+    front_quote_age_seconds: float | None = None,
+    next_quote_age_seconds: float | None = None,
+    front_next_skew_seconds: float | None = None,
+) -> CarrySnapshot:
+    return CarrySnapshot(
+        as_of=as_of,
+        root=root,
+        front=front,
+        next_contract=next_contract,
+        curve_state=curve_state,
+        roll_yield_annualized=roll_yield_annualized,
+        days_between_expiries=days_between_expiries,
+        days_to_front_expiry=days_to_front_expiry,
+        roll_recommended=roll_recommended,
+        roll_direction=roll_direction,
+        curve_gap=curve_gap,
+        roll_gap=curve_gap,
+        execution_roll_friction=execution_roll_friction,
+        execution_roll_friction_source=execution_roll_friction_source,
+        front_quote_age_seconds=front_quote_age_seconds,
+        next_quote_age_seconds=next_quote_age_seconds,
+        front_next_skew_seconds=front_next_skew_seconds,
+        quote_sync=quote_sync,
+        quality_flags=tuple(flags),
+    )
+
+
 def evaluate_carry(
     chain: ContractChain,
     *,
     as_of: datetime,
     roll_lead_days: int = 5,
+    quote_sync: QuoteSyncConfig | None = None,
     computed_at: datetime | None = None,  # reserved for envelope symmetry
 ) -> CarrySnapshot:
     del computed_at
+    sync = quote_sync or QuoteSyncConfig()
     flags: list[QualityFlag] = []
     as_of_u = _as_utc(as_of)
+
+    mismatched = _root_mismatches(chain)
+    if mismatched:
+        flags.append(
+            flag(
+                QualityCode.ROOT_MISMATCH,
+                QualityLevel.FAIL,
+                f"Observation root does not match chain root {chain.root!r}: {mismatched}",
+            )
+        )
+        return _carry(as_of=as_of_u, root=chain.root, flags=flags, quote_sync=sync)
+
     pit = observations_as_of(chain.observations, as_of_u)
     if not pit:
         flags.append(
@@ -243,20 +409,7 @@ def evaluate_carry(
                 "Quotes after as_of were ignored",
             )
         )
-        return CarrySnapshot(
-            as_of=as_of_u,
-            root=chain.root,
-            front=None,
-            next_contract=None,
-            curve_state="unavailable",
-            roll_yield_annualized=None,
-            days_between_expiries=None,
-            days_to_front_expiry=None,
-            roll_recommended=False,
-            roll_direction=None,
-            estimated_roll_friction=None,
-            quality_flags=tuple(flags),
-        )
+        return _carry(as_of=as_of_u, root=chain.root, flags=flags, quote_sync=sync)
 
     later = [o for o in chain.observations if _as_utc(o.timestamp) > as_of_u]
     if later:
@@ -269,8 +422,7 @@ def evaluate_carry(
         )
 
     live = live_quotes(chain.observations, as_of_u)
-    expired_only = not live
-    if expired_only:
+    if not live:
         flags.append(
             flag(
                 QualityCode.EXPIRED_CONTRACT,
@@ -278,29 +430,63 @@ def evaluate_carry(
                 "All contracts with quotes at as_of are expired",
             )
         )
-        return CarrySnapshot(
-            as_of=as_of_u,
-            root=chain.root,
-            front=None,
-            next_contract=None,
-            curve_state="unavailable",
-            roll_yield_annualized=None,
-            days_between_expiries=None,
-            days_to_front_expiry=None,
-            roll_recommended=False,
-            roll_direction=None,
-            estimated_roll_friction=None,
-            quality_flags=tuple(flags),
-        )
+        return _carry(as_of=as_of_u, root=chain.root, flags=flags, quote_sync=sync)
 
     front = live[0]
     nxt = live[1] if len(live) > 1 else None
+    front_age = _age_seconds(as_of_u, front)
+    next_age = _age_seconds(as_of_u, nxt) if nxt is not None else None
+    skew = None
+    if nxt is not None:
+        skew = abs((_as_utc(front.timestamp) - _as_utc(nxt.timestamp)).total_seconds())
+
+    stale = False
+    if front_age > sync.max_quote_age.total_seconds():
+        stale = True
+        flags.append(
+            flag(
+                QualityCode.STALE_QUOTE,
+                QualityLevel.FAIL,
+                f"Front quote age {front_age:.0f}s exceeds max_quote_age {sync.max_quote_age.total_seconds():.0f}s",
+            )
+        )
+    if next_age is not None and next_age > sync.max_quote_age.total_seconds():
+        stale = True
+        flags.append(
+            flag(
+                QualityCode.STALE_QUOTE,
+                QualityLevel.FAIL,
+                f"Deferred quote age {next_age:.0f}s exceeds max_quote_age {sync.max_quote_age.total_seconds():.0f}s",
+            )
+        )
+    if skew is not None and skew > sync.max_front_next_skew.total_seconds():
+        stale = True
+        flags.append(
+            flag(
+                QualityCode.MISALIGNED_QUOTES,
+                QualityLevel.FAIL,
+                f"Front/next timestamp skew {skew:.0f}s exceeds max_front_next_skew "
+                f"{sync.max_front_next_skew.total_seconds():.0f}s",
+            )
+        )
+    if stale:
+        return _carry(
+            as_of=as_of_u,
+            root=chain.root,
+            flags=flags,
+            quote_sync=sync,
+            front=front,
+            next_contract=nxt,
+            days_to_front_expiry=(front.expiry - as_of_u.date()).days,
+            front_quote_age_seconds=front_age,
+            next_quote_age_seconds=next_age,
+            front_next_skew_seconds=skew,
+        )
+
     if any(not _finite_price(q.price) for q in live[:2]):
         flags.append(flag(QualityCode.NON_FINITE, QualityLevel.FAIL, "Front/next price is not finite"))
 
     dte = (front.expiry - as_of_u.date()).days
-    roll_direction = "front_to_next"
-    roll_recommended = False
     if nxt is None:
         flags.append(
             flag(
@@ -309,26 +495,20 @@ def evaluate_carry(
                 "Need a deferred contract to compute carry / roll",
             )
         )
-        roll_direction = None
-        return CarrySnapshot(
+        return _carry(
             as_of=as_of_u,
             root=chain.root,
+            flags=flags,
+            quote_sync=sync,
             front=front,
-            next_contract=None,
-            curve_state="unavailable",
-            roll_yield_annualized=None,
-            days_between_expiries=None,
             days_to_front_expiry=dte,
-            roll_recommended=False,
-            roll_direction=None,
-            estimated_roll_friction=None,
-            quality_flags=tuple(flags),
+            front_quote_age_seconds=front_age,
         )
 
     days_between = (nxt.expiry - front.expiry).days
     roll_yield = None
     curve_state = "flat"
-    friction = None
+    curve_gap = None
     if days_between <= 0:
         flags.append(
             flag(
@@ -341,31 +521,50 @@ def evaluate_carry(
         flags.append(flag(QualityCode.NON_FINITE, QualityLevel.FAIL, "Invalid front/next prices"))
     else:
         roll_yield = (front.price / nxt.price - 1.0) * (365.0 / float(days_between))
+        curve_gap = (nxt.price - front.price) / abs(front.price)
         if nxt.price > front.price:
             curve_state = "contango"
         elif nxt.price < front.price:
             curve_state = "backwardation"
-        friction = abs(nxt.price - front.price) / abs(front.price)
-        roll_recommended = dte <= roll_lead_days
 
-    return CarrySnapshot(
+    exec_friction, exec_source, exec_flags = estimate_execution_roll_friction(front, nxt)
+    flags.extend(exec_flags)
+    if any(f.level is QualityLevel.FAIL for f in exec_flags):
+        return _carry(
+            as_of=as_of_u,
+            root=chain.root,
+            flags=flags,
+            quote_sync=sync,
+            front=front,
+            next_contract=nxt,
+            days_to_front_expiry=dte,
+            front_quote_age_seconds=front_age,
+            next_quote_age_seconds=next_age,
+            front_next_skew_seconds=skew,
+            execution_roll_friction_source=exec_source,
+        )
+
+    roll_recommended = dte <= roll_lead_days and days_between > 0
+    return _carry(
         as_of=as_of_u,
         root=chain.root,
+        flags=flags,
+        quote_sync=sync,
         front=front,
         next_contract=nxt,
-        curve_state=curve_state,
+        curve_state=curve_state if days_between > 0 else "unavailable",
         roll_yield_annualized=roll_yield,
         days_between_expiries=days_between if days_between > 0 else None,
         days_to_front_expiry=dte,
         roll_recommended=roll_recommended,
-        roll_direction=roll_direction,
-        estimated_roll_friction=friction,
-        quality_flags=tuple(flags),
+        roll_direction="front_to_next",
+        curve_gap=curve_gap,
+        execution_roll_friction=exec_friction,
+        execution_roll_friction_source=exec_source,
+        front_quote_age_seconds=front_age,
+        next_quote_age_seconds=next_age,
+        front_next_skew_seconds=skew,
     )
-
-
-def _finite_price(value: float) -> bool:
-    return value == value and value not in (float("inf"), float("-inf")) and value > 0
 
 
 def required_provider_fields() -> dict[str, tuple[str, ...]]:

@@ -35,6 +35,9 @@ class QualityCode:
     NON_POSITIVE_EDGE = "non_positive_edge"
     RISK_GOVERNOR_CAP_NOT_SUPPLIED = "risk_governor_cap_not_supplied"
     MISSING_REQUIRED_EVIDENCE = "missing_required_evidence"
+    MISSING_TRIAL_SHARPE_DISPERSION = "missing_trial_sharpe_dispersion"
+    DEGENERATE_STRATEGY = "degenerate_strategy"
+    CSCV_UNDEFINED_METRIC = "cscv_undefined_metric"
 
 
 class ReasonCode(str, Enum):

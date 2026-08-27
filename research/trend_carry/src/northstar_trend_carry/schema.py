@@ -12,8 +12,8 @@ from typing import Any, Mapping, Sequence
 
 from northstar_trend_carry.quality import QualityLevel
 
-SCHEMA_VERSION = "0.1.0"
-PACKAGE_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.1.1"
+PACKAGE_VERSION = "0.1.1"
 
 RESEARCH_ONLY_NOTE = (
     "Research-only. Not an order, not portfolio-engine input, and not a live "

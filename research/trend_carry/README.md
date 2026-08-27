@@ -42,7 +42,10 @@ statsmodels, `northstar-diagnostics`.
 Optional extra `stage1` installs `northstar-diagnostics` when that draft package
 is available. `research_edge_to_friction` delegates to Stage 1 EFR if importable,
 otherwise uses a local fallback with the same friction component names
-(including `futures_roll`).
+(including `futures_roll` as **execution** roll cost only). Bid/ask are
+recommended for that estimate. The front/deferred price gap is carry
+(`curve_gap` / `roll_gap`), not a cost, and is never copied into Stage 1
+`futures_roll`.
 
 ## Public API
 
@@ -53,10 +56,10 @@ otherwise uses a local fallback with the same friction component names
 | `evaluate_trend_health` | Horizon agreement, persistence, whipsaw, vol shock, breadth |
 | `neighboring_parameter_plateau` | Neighborhood / plateau robustness; never picks a lookback |
 | `refuse_performance_sweep_selection` | Explicit refusal to promote a sweep argmax |
-| `evaluate_carry` | Contango/backwardation roll yield from caller-supplied chain |
+| `evaluate_carry` | Contango/backwardation roll yield; `curve_gap` is carry, not friction |
 | `build_research_continuous_series` | PIT back-adjusted series (**not** executable P&L) |
-| `executable_contract_state` | Listed-contract identity and roll economics |
-| `research_edge_to_friction` | EFR hook (Stage 1 if present, else local) |
+| `executable_contract_state` | Listed-contract identity, curve gap, execution roll friction if known |
+| `research_edge_to_friction` | EFR hook (Stage 1 if present, else local); does not treat curve gap as cost |
 
 Ensemble method is always `equal_weight_capped_horizons`.
 `selected_lookback` is always `None`.
