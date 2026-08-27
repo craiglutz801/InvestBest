@@ -133,7 +133,7 @@ Observed harness on this branch: `CHAN_HARNESS_OK`, all five `adapter_mode` valu
 | 2 | `evaluate_candidate(EconomicCandidate, *, config=MeanReversionEligibilityConfig)` |
 | 3 | `evaluate_asset_trend(PriceSeries)`, `refuse_performance_sweep_selection({lookback: metric})` |
 | 4 | `HealthMonitor.evaluate(MeanReversionEvidence, *, identity=StrategyIdentity)` |
-| 5 | `evaluate_promotion(PromotionEvidence, config=PromotionConfig)`, `kelly_ceiling(returns, *, caps=RiskCapBundle)` |
+| 5 | `evaluate_promotion(PromotionEvidence, config=PromotionConfig)`, `kelly_ceiling(returns, *, caps=RiskCapBundle)` with explicit harness `risk_governor_cap`; health multiplier applied once |
 
 ---
 

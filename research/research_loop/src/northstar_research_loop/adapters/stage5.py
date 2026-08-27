@@ -2,6 +2,9 @@
 
 Robustness calls ``evaluate_promotion(evidence, config=...)``.
 Sizing calls ``kelly_ceiling(returns, *, caps=...)``.
+
+Health's advisory multiplier is applied once after the native ceiling.
+Missing ``risk_governor_cap`` fails closed at 0; it is not defaulted to 0.2.
 """
 
 from __future__ import annotations
@@ -146,6 +149,16 @@ class Stage5SizingAdapter:
 
         raw_caps = dict(evidence.get("sizing_caps") or {})
         health_mult = float(raw_caps.pop("health_advisory_multiplier", 1.0))
+        governor = raw_caps.get("risk_governor_cap")
+        if governor is None:
+            return SizingRecommendation(
+                fractional_kelly_ceiling=0.0,
+                applied_caps={"risk_governor_cap": 0.0, "health_advisory_multiplier": health_mult},
+                reason_codes=("size.missing_risk_governor_cap_fail_closed",),
+                subordinate_to_risk_governor=True,
+                source_package=self.source_package,
+            )
+
         caps = None
         if self.RiskCapBundle is not None:
             allowed = {
@@ -158,11 +171,9 @@ class Stage5SizingAdapter:
                 "risk_governor_cap",
                 "hard_leverage_cap",
             }
+            # Health is applied once after kelly_ceiling. Do not also inject it as
+            # drawdown_throttle — kelly_ceiling already multiplies by that field.
             kwargs = {k: v for k, v in raw_caps.items() if k in allowed}
-            if "drawdown_throttle" not in kwargs:
-                kwargs["drawdown_throttle"] = health_mult
-            if "risk_governor_cap" not in kwargs:
-                kwargs["risk_governor_cap"] = 0.2
             caps = self.RiskCapBundle(**kwargs)
 
         result = self.kelly_ceiling(
@@ -175,13 +186,15 @@ class Stage5SizingAdapter:
         if health_mult <= 0:
             ceiling = 0.0
         elif health_mult < 1.0:
-            ceiling = min(ceiling, ceiling * health_mult)
+            ceiling = ceiling * health_mult
         reasons = tuple(flag.code for flag in result.quality_flags)
         if not reasons:
             reasons = ("size.ok",)
         applied = dict(result.binding_caps or {})
         applied["final_ceiling"] = ceiling
         applied["health_advisory_multiplier"] = health_mult
+        applied["health_applied_once"] = 1.0
+        applied["risk_governor_cap"] = float(governor)
         applied["risk_governor_authoritative"] = 1.0
         applied["role"] = result.role
         return SizingRecommendation(

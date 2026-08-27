@@ -48,6 +48,8 @@ main
 | 4 | `northstar_edge_health` | `HealthMonitor.evaluate` | `MeanReversionEvidence` / `TrendEvidence`, `StrategyIdentity` |
 | 5 | `northstar_promotion` | `evaluate_promotion`, `kelly_ceiling` | `PromotionEvidence`, returns + `RiskCapBundle` |
 
+Sizing: health multiplier is applied once after `kelly_ceiling` (not also injected as `drawdown_throttle`). Missing `risk_governor_cap` returns a 0 ceiling; Stage 6 does not invent `0.2`.
+
 A missing package is **not** a silent `synthetic_fail_closed` pass. The harness calls `require_native_stages()` and fails.
 
 ## File ownership

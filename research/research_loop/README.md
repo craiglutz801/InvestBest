@@ -63,4 +63,7 @@ are used only when `northstar_diagnostics` is installed. No broker SDK.
 - Health `advisory_risk_multiplier` never mutates positions.
 - Fractional-Kelly output is a **ceiling**, clamped below hard risk caps,
   never a full-Kelly target, always marked subordinate to RiskGovernor.
+  Health’s advisory multiplier is applied **once** (not also as
+  `drawdown_throttle`). Missing `risk_governor_cap` fails closed at 0;
+  the adapter does not invent a 20% governor cap.
 - Isolation tests forbid broker/order APIs and imports from `hourlyMarketAgent`.

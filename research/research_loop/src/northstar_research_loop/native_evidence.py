@@ -334,6 +334,8 @@ def evidence_for(kind: Kind, experiment_id: str) -> dict[str, Any]:
         "promotion_config": promo_cfg,
         "sizing_returns": rets,
         "sizing_caps": {
+            # Explicit synthetic/test RiskGovernor capacity. The adapter must
+            # not invent this when omitted.
             "risk_governor_cap": 0.2,
             "hard_leverage_cap": 0.5,
             "concentration_max_weight": 0.3,

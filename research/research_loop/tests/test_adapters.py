@@ -62,6 +62,44 @@ def test_native_promotion_rejects_overfit_and_kelly_is_a_ceiling():
     assert sizing.source_package == "northstar_promotion"
 
 
+def test_health_multiplier_is_applied_once_not_squared():
+    _, rets, _ = promotion_bundle(experiment_id="adapter-health-once", overfit=False)
+    caps = {
+        "risk_governor_cap": 0.5,
+        "hard_leverage_cap": 1.0,
+        "concentration_max_weight": 1.0,
+    }
+    full = Stage5SizingAdapter().evaluate(
+        {"sizing_returns": rets, "sizing_caps": {**caps, "health_advisory_multiplier": 1.0}}
+    )
+    half = Stage5SizingAdapter().evaluate(
+        {"sizing_returns": rets, "sizing_caps": {**caps, "health_advisory_multiplier": 0.5}}
+    )
+    assert full.fractional_kelly_ceiling > 0
+    expected = 0.5 * full.fractional_kelly_ceiling
+    assert abs(half.fractional_kelly_ceiling - expected) < 1e-12
+    squared = 0.25 * full.fractional_kelly_ceiling
+    assert abs(half.fractional_kelly_ceiling - squared) > 1e-9
+    assert half.applied_caps.get("health_applied_once") == 1.0
+
+
+def test_missing_risk_governor_cap_cannot_yield_positive_sizing():
+    _, rets, _ = promotion_bundle(experiment_id="adapter-missing-governor", overfit=False)
+    sizing = Stage5SizingAdapter().evaluate(
+        {
+            "sizing_returns": rets,
+            "sizing_caps": {"hard_leverage_cap": 0.5, "health_advisory_multiplier": 1.0},
+        }
+    )
+    assert sizing.fractional_kelly_ceiling == 0.0
+    assert "size.missing_risk_governor_cap_fail_closed" in sizing.reason_codes
+    assert sizing.subordinate_to_risk_governor is True
+
+    empty = Stage5SizingAdapter().evaluate({"sizing_returns": rets, "sizing_caps": {}})
+    assert empty.fractional_kelly_ceiling == 0.0
+    assert "size.missing_risk_governor_cap_fail_closed" in empty.reason_codes
+
+
 def test_trend_adapter_calls_evaluate_asset_trend_not_a_guessed_name():
     from northstar_trend_carry.fixtures import uptrend_series
 
