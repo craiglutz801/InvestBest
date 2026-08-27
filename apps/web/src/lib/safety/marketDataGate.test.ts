@@ -63,8 +63,8 @@ describe("market data quality gate", () => {
   });
 
   it("rejects stale last bar", () => {
-    const bars = series();
-    bars[bars.length - 1] = bar({ time: new Date("2026-08-01T20:00:00Z") });
+    // Shift the whole series so timestamps stay strictly increasing; only last-bar age should fail.
+    const bars = series(MIN_BARS_FOR_TRADE, new Date("2026-08-01T20:00:00Z"));
     expect(evaluateBars(bars, { now })).toMatchObject({ ok: false, reason: "STALE_BARS" });
   });
 
@@ -179,6 +179,59 @@ describe("fail-closed: missing/nonpositive volume must not look like a valid ser
   it("still rejects a mostly-null volume series as partial", () => {
     const bars = series().map((b, i) => (i < 18 ? { ...b, volume: null } : b));
     expect(evaluateBars(bars, { now })).toMatchObject({ ok: false, reason: "PARTIAL_SERIES" });
+  });
+});
+
+describe("fail-closed: bar and quote timestamps must have temporal integrity", () => {
+  const now = new Date("2026-08-26T16:00:00Z");
+
+  it("documents the prior bypass: shuffled bars still passed when the last row was recent", () => {
+    const bars = series();
+    expect(bars[bars.length - 1]!.time.getTime()).toBe(now.getTime());
+    const shuffled = [...bars];
+    const tmp = shuffled[4]!;
+    shuffled[4] = shuffled[5]!;
+    shuffled[5] = tmp;
+    // Last bar is still `now`; only a chronological check can reject this.
+    expect(shuffled[shuffled.length - 1]!.time.getTime()).toBe(now.getTime());
+  });
+
+  it("rejects out-of-order bars", () => {
+    const bars = series();
+    const tmp = bars[8]!;
+    bars[8] = bars[9]!;
+    bars[9] = tmp;
+    expect(evaluateBars(bars, { now })).toMatchObject({ ok: false, reason: "OUT_OF_ORDER_BARS" });
+  });
+
+  it("rejects duplicate bar timestamps", () => {
+    const bars = series();
+    bars[10] = { ...bars[10]!, time: bars[9]!.time };
+    expect(evaluateBars(bars, { now })).toMatchObject({ ok: false, reason: "DUPLICATE_BARS" });
+  });
+
+  it("rejects a last bar materially in the future", () => {
+    const bars = series();
+    const future = new Date(now);
+    future.setUTCDate(future.getUTCDate() + 7);
+    const last = bars[bars.length - 1]!;
+    bars[bars.length - 1] = { ...last, time: future };
+    expect(evaluateBars(bars, { now })).toMatchObject({ ok: false, reason: "FUTURE_BARS" });
+  });
+
+  it("rejects a quote materially in the future", () => {
+    expect(
+      evaluateQuote({ price: 10, timestamp: new Date("2026-09-02T00:00:00Z") }, { now }),
+    ).toMatchObject({ ok: false, reason: "FUTURE_QUOTE" });
+  });
+
+  it("still accepts modest clock skew within the future slack", () => {
+    const quoteSkew = new Date(now.getTime() + 30 * 60 * 1000);
+    expect(evaluateQuote({ price: 10, timestamp: quoteSkew }, { now })).toEqual({ ok: true });
+    const bars = series();
+    const last = bars[bars.length - 1]!;
+    bars[bars.length - 1] = { ...last, time: new Date(now.getTime() + 12 * 3600_000) };
+    expect(evaluateBars(bars, { now })).toEqual({ ok: true });
   });
 });
 

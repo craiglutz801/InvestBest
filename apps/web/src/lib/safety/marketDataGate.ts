@@ -2,8 +2,9 @@
  * Market-data quality gate.
  *
  * Invalid / missing / stale / partial / non-finite / inconsistent bars or quotes
- * must never create a simulated trade. Callers record the reason code as an
- * auditable skip / no-trade result.
+ * must never create a simulated trade. After provider mapping, bar timestamps
+ * must be strictly increasing, and neither bars nor quotes may be materially
+ * in the future. Callers record the reason code as an auditable skip / no-trade.
  */
 
 export type BarLike = {
@@ -38,7 +39,11 @@ export type DataQualityReason =
   | "INVALID_QUOTE"
   | "STALE_QUOTE"
   | "INCONSISTENT_QUOTE"
-  | "MISSING_QUOTE_TIMESTAMP";
+  | "MISSING_QUOTE_TIMESTAMP"
+  | "DUPLICATE_BARS"
+  | "OUT_OF_ORDER_BARS"
+  | "FUTURE_BARS"
+  | "FUTURE_QUOTE";
 
 export type DataQualityResult =
   | { ok: true }
@@ -55,6 +60,12 @@ export const DEFAULT_MAX_BAR_AGE_HOURS = 120;
 
 /** Quotes with an explicit timestamp older than this are stale. */
 export const DEFAULT_MAX_QUOTE_AGE_HOURS = 24;
+
+/** Daily bars can be labeled for the current session/timezone; reject timestamps materially in the future. */
+export const DEFAULT_MAX_FUTURE_BAR_HOURS = 36;
+
+/** Intraday quotes may have modest clock skew; reject timestamps materially in the future. */
+export const DEFAULT_MAX_FUTURE_QUOTE_HOURS = 2;
 
 function asDate(value: Date | string | number | null | undefined): Date | null {
   if (value == null) return null;
@@ -86,6 +97,7 @@ export function evaluateBars(
     now?: Date;
     minBars?: number;
     maxAgeHours?: number;
+    maxFutureHours?: number;
     requireVolume?: boolean;
   },
 ): DataQualityResult {
@@ -102,12 +114,44 @@ export function evaluateBars(
     };
   }
 
+  const now = options?.now ?? new Date();
+  const maxAgeHours = options?.maxAgeHours ?? DEFAULT_MAX_BAR_AGE_HOURS;
+  const maxFutureHours = options?.maxFutureHours ?? DEFAULT_MAX_FUTURE_BAR_HOURS;
+
   let missingVolume = 0;
+  let previousMs: number | null = null;
   for (let i = 0; i < bars.length; i++) {
     const bar = bars[i];
     const t = asDate(bar.time);
     if (!t) {
       return { ok: false, reason: "NON_FINITE", detail: `Bar ${i} has an invalid timestamp.` };
+    }
+
+    const ts = t.getTime();
+    if (previousMs !== null) {
+      if (ts === previousMs) {
+        return {
+          ok: false,
+          reason: "DUPLICATE_BARS",
+          detail: `Bar ${i} timestamp ${t.toISOString()} duplicates the previous bar.`,
+        };
+      }
+      if (ts < previousMs) {
+        return {
+          ok: false,
+          reason: "OUT_OF_ORDER_BARS",
+          detail: `Bar ${i} timestamp ${t.toISOString()} is before the previous bar.`,
+        };
+      }
+    }
+    previousMs = ts;
+
+    if (ts - now.getTime() > maxFutureHours * 3600_000) {
+      return {
+        ok: false,
+        reason: "FUTURE_BARS",
+        detail: `Bar ${i} timestamp ${t.toISOString()} is more than ${maxFutureHours}h in the future.`,
+      };
     }
 
     for (const [name, value] of ohlcFields(bar)) {
@@ -156,8 +200,6 @@ export function evaluateBars(
 
   const last = bars[bars.length - 1];
   const lastTime = asDate(last.time);
-  const now = options?.now ?? new Date();
-  const maxAgeHours = options?.maxAgeHours ?? DEFAULT_MAX_BAR_AGE_HOURS;
   if (lastTime && now.getTime() - lastTime.getTime() > maxAgeHours * 3600_000) {
     return {
       ok: false,
@@ -180,7 +222,7 @@ export function evaluateBars(
 
 export function evaluateQuote(
   quote: QuoteLike | null | undefined,
-  options?: { now?: Date; maxAgeHours?: number; requireTimestamp?: boolean },
+  options?: { now?: Date; maxAgeHours?: number; maxFutureHours?: number; requireTimestamp?: boolean },
 ): DataQualityResult {
   if (quote == null) {
     return { ok: false, reason: "MISSING_QUOTE", detail: "No quote was provided." };
@@ -219,12 +261,22 @@ export function evaluateQuote(
 
   const now = options?.now ?? new Date();
   const maxAgeHours = options?.maxAgeHours ?? DEFAULT_MAX_QUOTE_AGE_HOURS;
-  if (ts && now.getTime() - ts.getTime() > maxAgeHours * 3600_000) {
-    return {
-      ok: false,
-      reason: "STALE_QUOTE",
-      detail: `Quote timestamp ${ts.toISOString()} is older than ${maxAgeHours}h.`,
-    };
+  const maxFutureHours = options?.maxFutureHours ?? DEFAULT_MAX_FUTURE_QUOTE_HOURS;
+  if (ts) {
+    if (ts.getTime() - now.getTime() > maxFutureHours * 3600_000) {
+      return {
+        ok: false,
+        reason: "FUTURE_QUOTE",
+        detail: `Quote timestamp ${ts.toISOString()} is more than ${maxFutureHours}h in the future.`,
+      };
+    }
+    if (now.getTime() - ts.getTime() > maxAgeHours * 3600_000) {
+      return {
+        ok: false,
+        reason: "STALE_QUOTE",
+        detail: `Quote timestamp ${ts.toISOString()} is older than ${maxAgeHours}h.`,
+      };
+    }
   }
 
   return { ok: true };

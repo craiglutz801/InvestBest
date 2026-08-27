@@ -38,7 +38,7 @@ Goal: prove the paper engine stays fail-closed, auditable, and single-flight und
 4. Record for the day:
    - DecisionRun id, status (`completed` / `skipped` / `failed`)
    - Whether any `PaperTrade` rows were created
-   - Data-quality skips (`MISSING_BARS`, `STALE_BARS`, `NON_FINITE`, `INCONSISTENT_OHLC`, `PARTIAL_SERIES`, quote failures)
+   - Data-quality skips (`MISSING_BARS`, `STALE_BARS`, `NON_FINITE`, `INCONSISTENT_OHLC`, `PARTIAL_SERIES`, `DUPLICATE_BARS`, `OUT_OF_ORDER_BARS`, `FUTURE_BARS`, `MISSING_QUOTE_TIMESTAMP`, `FUTURE_QUOTE`, other quote failures)
    - Duplicate/concurrent triggers: a second click or overlapping cron must return `skipped_in_progress` or `skipped_duplicate` and must not create a second trade set
 5. Reconstruct **one sampled decision** from `DecisionRun.notesJson.audit` plus `FeatureSnapshot` / `PaperTrade` (settings version, feature inputs, reason code, slippage, cash before/after, portfolio after).
 
@@ -50,6 +50,7 @@ Goal: prove the paper engine stays fail-closed, auditable, and single-flight und
 - SPY/benchmark series shorter than 200 bars (SMA200) produced **zero new buys**
 - Quotes without an authoritative provider timestamp were treated as stale/no-trade, not fresh
 - Missing or nonpositive volume was recorded as unusable (`PARTIAL_SERIES`), not coerced to a valid 0
+- Duplicate, out-of-order, or materially future-dated bars/quotes produced skip/no-trade, never a fill
 - Duplicate/concurrent triggers produced at most one trade set per hour bucket
 - Cash / position / cooldown / stop / take-profit behavior still matches shipped defaults
 - At least one sampled fill (if any trades occurred) reconstructs from persisted audit fields
