@@ -11,12 +11,14 @@ from northstar_mean_reversion.liquidity import LiquiditySnapshot
 from northstar_mean_reversion.reasons import EligibilityReasonCode
 
 from fixtures import (
+    basket_candidate,
     broken_cointegrated_pair,
     cointegrated_pair,
     expensive_friction,
     mean_break_pair,
     pair_candidate,
     make_config,
+    random_walk,
     unstable_hedge_pair,
 )
 
@@ -189,3 +191,40 @@ def test_every_rejection_has_a_typed_reason_code():
         if not gate.passed:
             assert gate.reason_code is not EligibilityReasonCode.ELIGIBLE
             assert gate.message
+
+
+def test_unequal_length_legs_fail_closed_without_truncation():
+    y, x = cointegrated_pair(N, seed=25)
+    decision = evaluate_candidate(pair_candidate(y, x[:180]), config=make_config())
+    assert decision.eligible is False
+    assert decision.status == "insufficient_data"
+    assert EligibilityReasonCode.MISALIGNED_INPUTS in _codes(decision)
+    assert decision.hedge_ratio is None
+    assert "cadf" not in decision.diagnostics
+
+
+def test_duplicate_legs_fail_closed_as_invalid_panel():
+    y, _x = cointegrated_pair(N, seed=26)
+    decision = evaluate_candidate(pair_candidate(y, y.copy()), config=make_config())
+    assert decision.eligible is False
+    assert decision.status == "insufficient_data"
+    assert EligibilityReasonCode.MISSING_OR_INVALID_DATA in _codes(decision)
+    assert EligibilityReasonCode.SHORT_SAMPLE not in _codes(decision)
+
+
+def test_constant_leg_fails_closed_as_invalid_panel():
+    y, x = cointegrated_pair(N, seed=27)
+    x = np.ones_like(x)
+    decision = evaluate_candidate(pair_candidate(y, x), config=make_config())
+    assert decision.eligible is False
+    assert decision.status == "insufficient_data"
+    assert EligibilityReasonCode.MISSING_OR_INVALID_DATA in _codes(decision)
+
+
+def test_scaled_duplicate_basket_fails_closed():
+    walk = random_walk(N, seed=28)
+    panel = np.column_stack([walk, 2.0 * walk, 3.0 * walk])
+    decision = evaluate_candidate(basket_candidate(panel), config=make_config())
+    assert decision.eligible is False
+    assert EligibilityReasonCode.MISSING_OR_INVALID_DATA in _codes(decision)
+    assert "johansen" not in decision.diagnostics or not decision.diagnostics["johansen"].is_usable

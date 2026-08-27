@@ -72,3 +72,25 @@ def test_future_liquidity_snapshot_is_a_pit_violation():
     )
     assert decision.eligible is False
     assert EligibilityReasonCode.POINT_IN_TIME_VIOLATION in decision.reason_codes
+
+
+def test_timestamps_length_mismatch_is_misaligned():
+    y, x = cointegrated_pair(N, seed=45)
+    timestamps = daily_timestamps(N - 20)
+    decision = evaluate_candidate(
+        pair_candidate(y, x, timestamps=timestamps),
+        config=make_config(),
+    )
+    assert decision.eligible is False
+    assert decision.status == "insufficient_data"
+    assert EligibilityReasonCode.MISALIGNED_INPUTS in decision.reason_codes
+
+
+def test_as_of_does_not_repair_unequal_legs_by_truncation():
+    y, x = cointegrated_pair(N, seed=46)
+    decision = evaluate_candidate(
+        pair_candidate(y, x[: N // 2], as_of=N - 1),
+        config=make_config(),
+    )
+    assert decision.eligible is False
+    assert EligibilityReasonCode.MISALIGNED_INPUTS in decision.reason_codes
