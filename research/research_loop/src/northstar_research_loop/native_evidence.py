@@ -202,7 +202,49 @@ def _plateau(*, spike: bool) -> Any:
     return evaluate_plateau(points, selected_trial_id="p5", radius=0.3, min_neighbors=2)
 
 
-def _registry(n_trials: int, experiment_id: str) -> ExperimentRegistry:
+def period_sharpe(returns: np.ndarray) -> float:
+    arr = np.asarray(returns, dtype=float)
+    mu = float(np.mean(arr))
+    sigma = float(np.std(arr, ddof=1))
+    if sigma == 0.0 or not np.isfinite(sigma):
+        return float("nan")
+    return mu / sigma
+
+
+def trial_return_paths(
+    n_trials: int,
+    selected: np.ndarray,
+    *,
+    overfit: bool,
+    seed: int,
+) -> tuple[np.ndarray, ...]:
+    """One return path per recorded search trial.
+
+    The selected candidate is the last trial. Neighboring trials are real
+    alternative paths (tight around the selected edge, or wide noise for the
+    overfit fixture) — not a constant or invented ``sharpe_trials_variance``.
+    """
+    selected = np.asarray(selected, dtype=float)
+    g = np.random.default_rng(seed)
+    n_obs = int(selected.size)
+    paths: list[np.ndarray] = []
+    if overfit:
+        for _ in range(n_trials - 1):
+            paths.append(g.normal(0.0, 0.02, size=n_obs))
+    else:
+        for _ in range(n_trials - 1):
+            paths.append(selected + g.normal(0.0, 0.0004, size=n_obs))
+    paths.append(selected)
+    return tuple(paths)
+
+
+def _registry(
+    n_trials: int,
+    experiment_id: str,
+    trial_sharpes: tuple[float, ...],
+) -> ExperimentRegistry:
+    if len(trial_sharpes) != n_trials:
+        raise ValueError("trial_sharpes length must equal n_trials")
     reg = ExperimentRegistry()
     reg.register_experiment(experiment_id, strategy_family="mean_reversion")
     for i in range(n_trials):
@@ -213,6 +255,7 @@ def _registry(n_trials: int, experiment_id: str) -> ExperimentRegistry:
             strategy_family="mean_reversion",
             parameters={"lookback": float(i + 1)},
             outcome=outcome,
+            metrics={"sharpe": float(trial_sharpes[i])},
         )
     return reg
 
@@ -231,9 +274,20 @@ def promotion_bundle(
 ) -> tuple[PromotionEvidence, np.ndarray, PromotionConfig]:
     n_trials = 240 if overfit else 3
     rets = np.random.default_rng(3).normal(0.004, 0.01, size=250)
-    reg = _registry(n_trials, experiment_id)
+    paths = trial_return_paths(n_trials, rets, overfit=overfit, seed=21)
+    search_sharpes = tuple(period_sharpe(path) for path in paths)
+    reg = _registry(n_trials, experiment_id, search_sharpes)
+    collected, _disp_flags = reg.trial_sharpes(experiment_id)
+    # Stage 5 DSR requires trial_sharpes (or sharpe_trials_variance) when N>1.
+    # Do not invent a variance to bypass that. Missing registry Sharpes fail closed.
+    if collected is None:
+        dsr = deflated_sharpe_ratio(rets, n_trials=n_trials)
+    else:
+        dsr = deflated_sharpe_ratio(rets, n_trials=n_trials, trial_sharpes=collected)
     contract = seal_holdout(250, holdout_size=40, embargo_bars=2, min_research_bars=30, min_holdout_bars=10)
     if overfit:
+        # Holdout peek is contamination evidence, not part of the DSR search N.
+        # Recorded after DSR collection so len(trial_sharpes) == n_trials.
         reg.record_trial(
             trial_id="peek",
             experiment_id=experiment_id,
@@ -241,6 +295,7 @@ def promotion_bundle(
             parameters={"lookback": 99.0},
             outcome="peek",
             used_holdout=True,
+            metrics={"sharpe": float(period_sharpe(rets))},
         )
     audit = audit_holdout(
         contract,
@@ -252,7 +307,6 @@ def promotion_bundle(
         contract.research.length, train_size=40, test_size=10, step=10, min_folds=3
     )
     wf = evaluate_walk_forward(splits, [0.2] * len(splits), min_oos_score=0.0, split_flags=sflags)
-    dsr = deflated_sharpe_ratio(rets, n_trials=n_trials)
     edge_mu = 0.001 if overfit else 0.03
     pbo = probability_of_backtest_overfitting(
         noisy_edge_matrix(240, 4, edge_mu=edge_mu, seed=9 if not overfit else 11),

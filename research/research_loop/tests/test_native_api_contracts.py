@@ -72,6 +72,40 @@ def test_stage5_evaluate_promotion_and_kelly_ceiling_signatures():
     assert kelly_sig.parameters["caps"].kind is inspect.Parameter.KEYWORD_ONLY
 
 
+def test_stage5_dsr_requires_trial_sharpe_dispersion_for_n_gt_1():
+    import numpy as np
+    from northstar_promotion.dsr import deflated_sharpe_ratio
+    from northstar_promotion.quality import QualityCode
+
+    sig = inspect.signature(deflated_sharpe_ratio)
+    assert "trial_sharpes" in sig.parameters
+    assert "sharpe_trials_variance" in sig.parameters
+    assert sig.parameters["trial_sharpes"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert sig.parameters["sharpe_trials_variance"].kind is inspect.Parameter.KEYWORD_ONLY
+
+    rets = np.random.default_rng(3).normal(0.004, 0.01, size=80)
+    missing = deflated_sharpe_ratio(rets, n_trials=5)
+    assert missing.is_usable is False
+    assert any(f.code == QualityCode.MISSING_TRIAL_SHARPE_DISPERSION for f in missing.quality_flags)
+
+
+def test_stage3_curve_gap_is_not_execution_roll_friction():
+    from datetime import datetime, timezone
+
+    from northstar_trend_carry.fixtures import two_leg_chain
+    from northstar_trend_carry.friction import FrictionInputs, merge_roll_friction
+    from northstar_trend_carry.futures import evaluate_carry
+
+    as_of = datetime(2024, 1, 20, tzinfo=timezone.utc)
+    chain = two_leg_chain(front_price=100.0, next_price=105.0, as_of=as_of)
+    carry = evaluate_carry(chain, as_of=as_of)
+    assert carry.curve_gap == 0.05
+    assert carry.execution_roll_friction is None
+    merged = merge_roll_friction(FrictionInputs(), carry)
+    assert merged.futures_roll == 0.0
+    assert merged.as_dict() == FrictionInputs().as_dict()
+
+
 def test_guessed_stage5_names_are_not_the_integration_path():
     from northstar_promotion import evaluate_promotion, kelly_ceiling
     from northstar_research_loop.adapters.stage5 import Stage5RobustnessAdapter, Stage5SizingAdapter

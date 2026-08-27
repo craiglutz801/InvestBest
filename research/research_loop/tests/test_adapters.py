@@ -1,11 +1,31 @@
 from __future__ import annotations
 
+from northstar_promotion.quality import QualityLevel
 from northstar_research_loop.adapters.discovery import NATIVE_MODULES, discover_all, discover_stage
 from northstar_research_loop.adapters.stage2 import Stage2EligibilityAdapter
 from northstar_research_loop.adapters.stage3 import Stage3TrendCarryAdapter
 from northstar_research_loop.adapters.stage5 import Stage5RobustnessAdapter, Stage5SizingAdapter
 from northstar_research_loop.contracts import DiagnosticBundle
 from northstar_research_loop.native_evidence import promotion_bundle
+
+
+def test_promotion_bundle_feeds_registry_trial_sharpes_into_dsr():
+    evidence, _, _ = promotion_bundle(experiment_id="adapter-dsr-dispersion", overfit=False)
+    collected, flags = evidence.registry.trial_sharpes(evidence.experiment_id)
+    assert collected is not None
+    assert len(collected) == evidence.dsr.n_trials == 3
+    assert evidence.dsr.is_usable is True
+    assert evidence.dsr.meta["parameters"]["supplied_trial_sharpes"] is True
+    assert evidence.dsr.meta["parameters"]["supplied_sharpe_trials_variance"] is False
+    assert not any(f.level is QualityLevel.FAIL for f in flags)
+
+    overfit, _, _ = promotion_bundle(experiment_id="adapter-dsr-overfit", overfit=True)
+    search = tuple(t for t in overfit.registry.trials_for("adapter-dsr-overfit") if t.trial_id != "peek")
+    search_sharpes = tuple(float(t.metrics["sharpe"]) for t in search)
+    assert len(search_sharpes) == overfit.dsr.n_trials == 240
+    assert overfit.dsr.meta["parameters"]["supplied_trial_sharpes"] is True
+    assert overfit.dsr.meta["parameters"]["supplied_sharpe_trials_variance"] is False
+    assert any(t.used_holdout for t in overfit.registry.trials_for("adapter-dsr-overfit"))
 
 
 def test_all_five_stages_are_native_on_integration_branch():

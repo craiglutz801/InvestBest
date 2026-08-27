@@ -21,7 +21,7 @@ On this integration branch the adapters call typed public functions:
 | 2 | `evaluate_candidate(candidate, *, config=)` |
 | 3 | `evaluate_asset_trend(series, ...)`, `refuse_performance_sweep_selection` |
 | 4 | `HealthMonitor.evaluate(evidence, *, identity=)` |
-| 5 | `evaluate_promotion(evidence, config=)`, `kelly_ceiling(returns, *, caps=)` |
+| 5 | `evaluate_promotion(evidence, config=)`, `kelly_ceiling(returns, *, caps=)`; DSR gets registry `trial_sharpes` (no invented `sharpe_trials_variance`) |
 
 `require_native_stages()` fails the harness if any of those packages is missing. There is no silent `synthetic_fail_closed` pass.
 
