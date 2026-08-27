@@ -6,7 +6,7 @@ stand-ins for engine *outputs*.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 import numpy as np
@@ -31,6 +31,15 @@ from northstar_trend_carry.fixtures import uptrend_series
 
 N = 240
 AS_OF = datetime(2026, 1, 15, tzinfo=timezone.utc)
+
+
+def daily_timestamps(n: int, end: datetime = AS_OF) -> tuple[datetime, ...]:
+    start = end - timedelta(days=n - 1)
+    return tuple(start + timedelta(days=i) for i in range(n))
+
+
+STAMPS = daily_timestamps(N, AS_OF)
+
 MR_IDENTITY = StrategyIdentity(
     strategy_family="mean_reversion",
     strategy_id="mr_cadf_residual",
@@ -130,6 +139,7 @@ def pair_candidate(
         relationship_rationale="Large-cap beverage peers with overlapping demand and input costs",
         legs={"KO": y, "PEP": x},
         holding_horizon=10.0,
+        timestamps=STAMPS if len(y) == N else daily_timestamps(len(y), AS_OF),
         as_of=AS_OF,
         expected_gross_edge=expected_gross_edge,
         friction=friction if friction is not None else cheap_friction(),
@@ -309,6 +319,7 @@ def evidence_for(kind: Kind, experiment_id: str) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "y": y,
         "x": x,
+        "timestamps": STAMPS,
         "expected_gross_edge": edge,
         "friction": friction.as_dict(),
         "as_of": AS_OF,

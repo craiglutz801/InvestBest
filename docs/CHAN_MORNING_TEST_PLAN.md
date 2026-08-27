@@ -71,6 +71,18 @@ Do **not** run all six pytest directories in one invocation; several packages sh
 
 Each focused suite should pass. Stage 6 includes contract tests that fail if Stage 2–5 public functions are renamed (for example Stage 5 must export `evaluate_promotion` and `kelly_ceiling`, not `evaluate_robustness`).
 
+Observed on this integration branch (2026-08-27):
+
+| Suite | Passed |
+|---|---|
+| Stage 1 `research/statistical_diagnostics` | 50 |
+| Stage 2 `research/mean_reversion_eligibility` | 33 |
+| Stage 3 `research/trend_carry` | 58 |
+| Stage 4 `research/edge_health` | 66 |
+| Stage 5 `research/anti_overfit_promotion` | 54 |
+| Stage 6 `research/research_loop` | 44 |
+| **Total** | **305** |
+
 A green script ends with:
 
 ```text
@@ -108,6 +120,8 @@ Also required:
   - `robustness` / `sizing` → `northstar_promotion`
 
 If any required package is missing, the harness exits 1 with `CHAN_HARNESS_FAIL` and does **not** silently use `synthetic_fail_closed`.
+
+Observed harness on this branch: `CHAN_HARNESS_OK`, all five `adapter_mode` values `native`, `good_candidate` → `shadow-ready`, `overfit_candidate` → `rejected` (`ISOLATED_OPTIMUM`, `HOLDOUT_CONTAMINATION`), `high_friction_candidate` → `rejected` (`insufficient_efr`), `structurally_broken_candidate` → `paused` (`mr.structural_break` from Stage 4), `statistically_invalid_candidate` → `rejected` (Stage 2), `places_trade: false`, `promotes_to_live: false`, 1 retained winner, 4 retained failures.
 
 ---
 

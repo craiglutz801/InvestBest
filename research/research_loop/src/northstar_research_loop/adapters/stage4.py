@@ -75,11 +75,12 @@ class Stage4HealthAdapter:
         codes = tuple(
             item.value if hasattr(item, "value") else str(item) for item in snapshot.reason_codes
         )
-        break_value = (
-            self.ReasonCode.MR_STRUCTURAL_BREAK.value
+        break_token = (
+            self.ReasonCode.MR_STRUCTURAL_BREAK
             if self.ReasonCode is not None
             else "mr.structural_break"
         )
+        break_value = break_token.value if hasattr(break_token, "value") else str(break_token)
         break_detected = break_value in codes or bool(
             getattr(native_evidence, "structural_break_detected", False)
         )

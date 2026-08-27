@@ -161,13 +161,22 @@ class Stage1DiagnosticsAdapter:
         expected_gross_edge = evidence.get("expected_gross_edge")
         friction_dict = dict(evidence.get("friction") or {})
         as_of = evidence.get("as_of")
+        timestamps = evidence.get("timestamps")
         results: list[Any] = []
 
         # Residual cointegration is the mean-reversion formation test.
         if y is not None and x is not None:
-            results.append(self.module.cadf_cointegration(y, x, as_of=as_of))
+            results.append(
+                self.module.cadf_cointegration(
+                    y, x, timestamps=timestamps, as_of=as_of
+                )
+            )
         elif y is not None:
-            results.append(self.module.adf_stationarity(y, as_of=as_of))
+            results.append(
+                self.module.adf_stationarity(
+                    y, timestamps=timestamps, as_of=as_of
+                )
+            )
 
         if expected_gross_edge is not None:
             friction_cls = self.module.FrictionInputs
@@ -186,7 +195,9 @@ class Stage1DiagnosticsAdapter:
 
         if evidence.get("run_structural_break") is True and y is not None:
             results.append(
-                self.module.detect_structural_break(y, method="chow_ols", as_of=as_of)
+                self.module.detect_structural_break(
+                    y, method="chow_ols", timestamps=timestamps, as_of=as_of
+                )
             )
 
         if not results:
