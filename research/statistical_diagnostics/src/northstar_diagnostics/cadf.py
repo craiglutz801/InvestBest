@@ -10,7 +10,15 @@ import statsmodels.tsa.stattools as ts
 
 from northstar_diagnostics.quality import QualityCode, QualityLevel
 from northstar_diagnostics.schema import DiagnosticResult, failed_result, make_result
-from northstar_diagnostics.series import ArrayLike, flag, ols_with_intercept, prepare_series, variance_is_degenerate
+from northstar_diagnostics.series import (
+    ArrayLike,
+    flag,
+    length_mismatch_flag,
+    ols_with_intercept,
+    prepare_series,
+    timestamp_mismatch_flag,
+    variance_is_degenerate,
+)
 
 CADF_ASSUMPTIONS = (
     "Engle-Granger / CADF: OLS hedge regression then a unit-root test on residuals.",
@@ -19,6 +27,7 @@ CADF_ASSUMPTIONS = (
     "A stable in-sample hedge ratio is not guaranteed out of sample.",
     "Cointegration is not a sufficient condition for a pairs trade after costs.",
     "Structural breaks can produce spurious residual stationarity or hide a relation.",
+    "y and x must already be equal-length and date-aligned; unequal or mismatched inputs fail closed.",
 )
 
 
@@ -27,6 +36,7 @@ def cadf_cointegration(
     x: ArrayLike,
     *,
     timestamps: Sequence[datetime] | None = None,
+    x_timestamps: Sequence[datetime] | None = None,
     as_of: datetime | int | None = None,
     trend: str = "c",
     maxlag: int | None = None,
@@ -35,7 +45,12 @@ def cadf_cointegration(
     frequency: str | None = None,
     computed_at: datetime | None = None,
 ) -> DiagnosticResult:
-    """Engle-Granger cointegration test for y against x (1d or 2d)."""
+    """Engle-Granger cointegration test for y against x (1d or 2d).
+
+    ``y`` and ``x`` must have equal aligned lengths. If timestamps are
+    supplied, ``x_timestamps`` must match ``timestamps`` exactly. Unequal
+    lengths are never truncated.
+    """
 
     params = {
         "trend": trend,
@@ -44,21 +59,73 @@ def cadf_cointegration(
         "min_obs": min_obs,
         "frequency": frequency,
     }
-    y_prep = prepare_series(y, timestamps=timestamps, as_of=as_of, min_obs=min_obs, frequency=frequency)
+    y_arr = np.asarray(y, dtype=np.float64).reshape(-1)
     x_arr = np.asarray(x, dtype=np.float64)
+    flags: list = []
+
+    if x_arr.ndim > 2:
+        flags.append(
+            flag(
+                QualityCode.INVALID_INPUT,
+                QualityLevel.FAIL,
+                "x must be 1d or 2d",
+            )
+        )
+        dummy = prepare_series(y_arr, timestamps=timestamps, as_of=as_of, min_obs=min_obs, frequency=frequency)
+        return failed_result(
+            diagnostic_id="cadf",
+            name="CADF / Engle-Granger residual cointegration",
+            sample=dummy.sample,
+            method="statsmodels.tsa.stattools.coint",
+            parameters=params,
+            quality_flags=flags,
+            assumptions=CADF_ASSUMPTIONS,
+            as_of=dummy.as_of,
+            computed_at=computed_at,
+        )
+
+    x_rows = int(x_arr.size if x_arr.ndim <= 1 else x_arr.shape[0])
+    length_flag = length_mismatch_flag(int(y_arr.size), x_rows)
+    ts_flag = timestamp_mismatch_flag(timestamps, x_timestamps if x_timestamps is not None else timestamps)
+    if length_flag is not None:
+        flags.append(length_flag)
+    if ts_flag is not None:
+        flags.append(ts_flag)
+    if flags:
+        dummy = prepare_series(y_arr, timestamps=timestamps, as_of=as_of, min_obs=min_obs, frequency=frequency)
+        return failed_result(
+            diagnostic_id="cadf",
+            name="CADF / Engle-Granger residual cointegration",
+            sample=dummy.sample,
+            method="statsmodels.tsa.stattools.coint",
+            parameters=params,
+            quality_flags=flags,
+            assumptions=CADF_ASSUMPTIONS,
+            as_of=dummy.as_of,
+            computed_at=computed_at,
+        )
+
+    shared_timestamps = timestamps
+    y_prep = prepare_series(
+        y_arr, timestamps=shared_timestamps, as_of=as_of, min_obs=min_obs, frequency=frequency
+    )
     if x_arr.ndim == 1:
-        x_prep = prepare_series(x_arr, timestamps=timestamps, as_of=as_of, min_obs=min_obs, frequency=frequency)
-        x_mat = x_prep.values.reshape(-1, 1) if x_prep.usable else None
+        x_prep = prepare_series(
+            x_arr, timestamps=shared_timestamps, as_of=as_of, min_obs=min_obs, frequency=frequency
+        )
+        x_mat = x_prep.values.reshape(-1, 1) if x_prep.values.size else None
         x_flags = x_prep.flags
         x_usable = x_prep.usable
+        x_rows_used = int(x_prep.values.size)
     else:
         from northstar_diagnostics.series import prepare_panel
 
         x_mat, x_prepared = prepare_panel(
-            x_arr, timestamps=timestamps, as_of=as_of, min_obs=min_obs, frequency=frequency
+            x_arr, timestamps=shared_timestamps, as_of=as_of, min_obs=min_obs, frequency=frequency
         )
         x_flags = x_prepared.flags
         x_usable = x_prepared.usable
+        x_rows_used = 0 if x_mat is None else int(x_mat.shape[0])
 
     flags = list(y_prep.flags) + [f for f in x_flags if f not in y_prep.flags]
     if not y_prep.usable or not x_usable or x_mat is None:
@@ -74,15 +141,35 @@ def cadf_cointegration(
             computed_at=computed_at,
         )
 
-    n = min(y_prep.values.size, x_mat.shape[0])
-    y_v = y_prep.values[:n]
-    x_v = x_mat[:n]
-    if n < min_obs:
+    if y_prep.values.size != x_rows_used:
+        flags.append(
+            length_mismatch_flag(int(y_prep.values.size), x_rows_used, what="point-in-time y and x")
+            or flag(
+                QualityCode.LENGTH_MISMATCH,
+                QualityLevel.FAIL,
+                "Point-in-time y and x lengths differ",
+            )
+        )
+        return failed_result(
+            diagnostic_id="cadf",
+            name="CADF / Engle-Granger residual cointegration",
+            sample=y_prep.sample,
+            method="statsmodels.tsa.stattools.coint",
+            parameters=params,
+            quality_flags=flags,
+            assumptions=CADF_ASSUMPTIONS,
+            as_of=y_prep.as_of,
+            computed_at=computed_at,
+        )
+
+    y_v = y_prep.values
+    x_v = x_mat
+    if y_v.size < min_obs:
         flags.append(
             flag(
                 QualityCode.SHORT_SAMPLE,
                 QualityLevel.FAIL,
-                f"Aligned pair length {n} is below min_obs={min_obs}",
+                f"Aligned pair length {y_v.size} is below min_obs={min_obs}",
             )
         )
         return failed_result(

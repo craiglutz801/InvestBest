@@ -20,8 +20,11 @@ Every call returns `DiagnosticResult` with:
 - `hypotheses`, `assumptions`, `quality_flags`, `interpretation`, `notes`
 
 Quality flags fail-closed on short samples, NaN/Inf, degenerate variance,
-unsorted timestamps, invalid friction, and many singular inputs. Point-in-time
-slicing uses only observations at or before `as_of`.
+unequal or misaligned pair lengths, unsorted or mismatched timestamps,
+rank-deficient / constant / duplicate / near-collinear panels, invalid
+friction, and other unusable inputs. Point-in-time slicing uses only
+observations at or before `as_of`. Unequal-length pair inputs are never
+truncated.
 
 ## 1. Augmented Dickey-Fuller (`adf_stationarity`)
 
@@ -36,7 +39,9 @@ override the RiskGovernor.
 ## 2. CADF / Engle-Granger (`cadf_cointegration`)
 
 **Can:** Test residual stationarity of an OLS hedge of `y` on `x` with
-cointegration critical values; report the in-sample hedge ratio.
+cointegration critical values; report the in-sample hedge ratio. `y` and `x`
+must be equal-length and date-aligned; mismatched lengths or timestamps fail
+closed instead of truncating.
 
 **Cannot:** Guarantee the hedge ratio is stable out of sample; identify which
 leg is independent; rule out spurious residual stationarity around breaks; or
@@ -48,8 +53,9 @@ imply a pairs trade after costs.
 sequential 5% trace suggested rank, and a scaled cointegrating vector.
 
 **Cannot:** Produce unique trading weights (vectors are identified up to
-scaling); supply p-values (statsmodels does not); remain reliable in short or
-near-singular panels; or authorize basket trades.
+scaling); supply p-values (statsmodels does not); remain reliable in short
+samples; or authorize basket trades. Rank-deficient, constant, duplicate, or
+near-collinear panels fail closed and do not run Johansen.
 
 ## 4. Mean-reversion half-life (`mean_reversion_half_life`)
 

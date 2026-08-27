@@ -55,3 +55,11 @@ def test_rolling_short_and_nan():
     y[10] = np.nan
     nan_res = rolling_stationarity(y, window=40, min_obs=20)
     assert not nan_res.is_usable
+
+
+def test_rolling_parameter_stability_rejects_unequal_lengths():
+    y, x = cointegrated_pair(120, seed=66)
+    result = rolling_parameter_stability(y, x[:80], window=40, step=10, min_obs=30)
+    assert not result.is_usable
+    assert any(f.code == QualityCode.LENGTH_MISMATCH for f in result.quality_flags)
+    assert result.statistics == {}
