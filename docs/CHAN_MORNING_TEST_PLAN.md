@@ -18,14 +18,14 @@ gh pr list --state open
 |---|---|---|---|---|
 | Paper safety | #1 | #2 | `cursor/paper-only-safety-hardening-072f` | `apps/web` safety (disjoint) |
 | vNext architecture | — | #16 | `cursor/northstaralpha-vnext-architecture-3dfb` | docs only |
-| 1 Diagnostics | #3 | #4 | `cursor/chan-stage1-statistical-diagnostics-fd6c` | `northstar_diagnostics` |
-| 2 Mean-reversion | #5 | #11 | `cursor/chan-stage2-mean-reversion-eligibility-7dee` | `northstar_mean_reversion` |
-| 3 Trend + carry | #6 | #10 | `cursor/chan-stage3-trend-carry-1042` | `northstar_trend_carry` |
-| 4 Edge health | #7 | #13 | `cursor/chan-stage4-edge-health-136d` | `northstar_edge_health` |
-| 5 Anti-overfit | #8 | #14 | `cursor/chan-stage5-anti-overfit-promotion-add0` | `northstar_promotion` |
+| 1 Diagnostics | #3 | #4 | `cursor/chan-stage1-statistical-diagnostics-fd6c` @ `d2b3218` | `northstar_diagnostics` |
+| 2 Mean-reversion | #5 | #11 | `cursor/chan-stage2-mean-reversion-eligibility-7dee` @ `b0d3e7f` | `northstar_mean_reversion` |
+| 3 Trend + carry | #6 | #10 | `cursor/chan-stage3-trend-carry-1042` @ `30cf67e` | `northstar_trend_carry` |
+| 4 Edge health | #7 | #13 | `cursor/chan-stage4-edge-health-136d` @ `f5db175` | `northstar_edge_health` |
+| 5 Anti-overfit | #8 | #14 | `cursor/chan-stage5-anti-overfit-promotion-add0` @ `0c687c9` | `northstar_promotion` |
 | 6 Research loop | #9 | #12 | `cursor/chan-stage6-research-loop-6fec` | `northstar_research_loop` |
 
-PR #12 is a **temporary integration branch**: Stage 2–5 research trees are checked out onto the Stage 6/Stage 1 stack so the harness can call native APIs. That is not a merge to `main`.
+PR #12 is a **temporary integration branch**: Stage 1–5 research trees are copied onto this branch so the harness can call native APIs. Stage 1 was refreshed to `d2b3218` (65 tests). Stages 2 and 4 had **no newer heads** this pass; they are re-run against the copied Stage 1 package. That is not a merge to `main`.
 
 vNext constraint (PR #16): this research plane stays unwired to `hourlyMarketAgent` / legacy heuristic scoring.
 

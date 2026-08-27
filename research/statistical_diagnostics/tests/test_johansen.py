@@ -41,20 +41,49 @@ def test_johansen_requires_two_series_and_enough_rows():
     assert any(f.code == QualityCode.SHORT_SAMPLE for f in short.quality_flags)
 
 
-def test_johansen_nan_and_collinear():
+def test_johansen_nan_fails():
     panel = cointegrated_triple(80, seed=23)
     panel = panel.copy()
     panel[4, 1] = np.nan
     nan_res = johansen_cointegration(panel, min_obs=40)
     assert not nan_res.is_usable
 
+
+def test_johansen_fails_closed_on_exact_linear_dependence():
     walk = random_walk(80, seed=24)
     collinear = np.column_stack([walk, 2.0 * walk, 3.0 * walk])
-    col_res = johansen_cointegration(collinear, min_obs=40)
-    # Either a fail-closed singular result or a WARN plus rank-deficient note is acceptable
-    codes = {f.code for f in col_res.quality_flags}
-    assert (
-        not col_res.is_usable
-        or QualityCode.NEAR_SINGULAR in codes
-        or QualityCode.COMPUTATION_ERROR in codes
-    )
+    result = johansen_cointegration(collinear, min_obs=40)
+    assert not result.is_usable
+    codes = {f.code for f in result.quality_flags}
+    assert QualityCode.NEAR_SINGULAR in codes or QualityCode.INSUFFICIENT_RANK in codes or QualityCode.COLLINEAR_SERIES in codes
+    assert result.statistics == {}
+
+
+def test_johansen_fails_closed_on_constant_column():
+    walk = random_walk(80, seed=25)
+    panel = np.column_stack([walk, np.ones(80)])
+    result = johansen_cointegration(panel, min_obs=40)
+    assert not result.is_usable
+    codes = {f.code for f in result.quality_flags}
+    assert QualityCode.CONSTANT_SERIES in codes or QualityCode.DEGENERATE_VARIANCE in codes
+    assert result.statistics == {}
+
+
+def test_johansen_fails_closed_on_duplicate_columns():
+    walk = random_walk(80, seed=26)
+    panel = np.column_stack([walk, walk.copy()])
+    result = johansen_cointegration(panel, min_obs=40)
+    assert not result.is_usable
+    codes = {f.code for f in result.quality_flags}
+    assert QualityCode.COLLINEAR_SERIES in codes or QualityCode.NEAR_SINGULAR in codes
+    assert result.statistics == {}
+
+
+def test_johansen_fails_closed_on_near_collinear_columns():
+    walk = random_walk(80, seed=27)
+    panel = np.column_stack([walk, walk + 1e-12])
+    result = johansen_cointegration(panel, min_obs=40)
+    assert not result.is_usable
+    codes = {f.code for f in result.quality_flags}
+    assert QualityCode.NEAR_SINGULAR in codes or QualityCode.INSUFFICIENT_RANK in codes or QualityCode.COLLINEAR_SERIES in codes
+    assert result.statistics == {}

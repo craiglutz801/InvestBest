@@ -15,13 +15,21 @@ from northstar_diagnostics.adf import adf_stationarity
 from northstar_diagnostics.half_life import mean_reversion_half_life
 from northstar_diagnostics.quality import QualityCode, QualityLevel
 from northstar_diagnostics.schema import DiagnosticResult, failed_result, make_result
-from northstar_diagnostics.series import ArrayLike, flag, ols_with_intercept, prepare_series, variance_is_degenerate
+from northstar_diagnostics.series import (
+    ArrayLike,
+    flag,
+    length_mismatch_flag,
+    ols_with_intercept,
+    prepare_series,
+    variance_is_degenerate,
+)
 
 ROLLING_ASSUMPTIONS = (
     "Each rolling window is sliced with an inclusive end index; later observations are unused.",
     "Overlapping windows are serially dependent, so stability fractions are descriptive, not independent tests.",
     "Parameter-stability statistics summarize in-window OLS hedge ratios and residual volatility.",
     "A stable in-sample coefficient path is not a trading signal and can still break after the last window.",
+    "Pair inputs must be equal-length and aligned; unequal series are never truncated.",
 )
 
 
@@ -192,8 +200,26 @@ def rolling_parameter_stability(
     """Rolling OLS hedge ratio and residual-volatility stability for a pair."""
 
     params = {"window": window, "step": step, "min_obs": min_obs, "frequency": frequency}
-    y_prep = prepare_series(y, timestamps=timestamps, as_of=as_of, min_obs=max(min_obs, window), frequency=frequency)
-    x_prep = prepare_series(x, timestamps=timestamps, as_of=as_of, min_obs=max(min_obs, window), frequency=frequency)
+    y_arr = np.asarray(y, dtype=np.float64).reshape(-1)
+    x_arr = np.asarray(x, dtype=np.float64).reshape(-1)
+    length_flag = length_mismatch_flag(int(y_arr.size), int(x_arr.size))
+    if length_flag is not None:
+        dummy = prepare_series(
+            y_arr, timestamps=timestamps, as_of=as_of, min_obs=max(min_obs, window), frequency=frequency
+        )
+        return failed_result(
+            diagnostic_id="rolling_parameter_stability",
+            name="Rolling hedge-ratio / residual-vol stability",
+            sample=dummy.sample,
+            method="rolling OLS hedge ratio",
+            parameters=params,
+            quality_flags=(length_flag,),
+            assumptions=ROLLING_ASSUMPTIONS,
+            as_of=dummy.as_of,
+            computed_at=computed_at,
+        )
+    y_prep = prepare_series(y_arr, timestamps=timestamps, as_of=as_of, min_obs=max(min_obs, window), frequency=frequency)
+    x_prep = prepare_series(x_arr, timestamps=timestamps, as_of=as_of, min_obs=max(min_obs, window), frequency=frequency)
     flags = list(y_prep.flags) + [f for f in x_prep.flags if f not in y_prep.flags]
     if not y_prep.usable or not x_prep.usable:
         return failed_result(
@@ -208,9 +234,30 @@ def rolling_parameter_stability(
             computed_at=computed_at,
         )
 
-    n = min(y_prep.values.size, x_prep.values.size)
-    y_v = y_prep.values[:n]
-    x_v = x_prep.values[:n]
+    if y_prep.values.size != x_prep.values.size:
+        flags.append(
+            length_mismatch_flag(int(y_prep.values.size), int(x_prep.values.size), what="point-in-time y and x")
+            or flag(
+                QualityCode.LENGTH_MISMATCH,
+                QualityLevel.FAIL,
+                "Point-in-time y and x lengths differ",
+            )
+        )
+        return failed_result(
+            diagnostic_id="rolling_parameter_stability",
+            name="Rolling hedge-ratio / residual-vol stability",
+            sample=y_prep.sample,
+            method="rolling OLS hedge ratio",
+            parameters=params,
+            quality_flags=flags,
+            assumptions=ROLLING_ASSUMPTIONS,
+            as_of=y_prep.as_of,
+            computed_at=computed_at,
+        )
+
+    n = y_prep.values.size
+    y_v = y_prep.values
+    x_v = x_prep.values
     ends = _window_ends(n, window, step)
     if not ends:
         flags.append(

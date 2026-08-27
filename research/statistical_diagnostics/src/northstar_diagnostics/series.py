@@ -387,30 +387,8 @@ def prepare_panel(
                 )
             )
 
-    # collinearity / rank
-    usable = not any(f.level is QualityLevel.FAIL for f in flags)
-    if usable and panel.shape[1] >= 2 and panel.shape[0] >= panel.shape[1]:
-        centered = panel - np.nanmean(panel, axis=0, keepdims=True)
-        try:
-            rank = int(np.linalg.matrix_rank(centered, tol=1e-10))
-        except np.linalg.LinAlgError:
-            rank = 0
-        if rank < min(panel.shape):
-            flags.append(
-                flag(
-                    QualityCode.NEAR_SINGULAR,
-                    QualityLevel.WARN if rank >= 1 else QualityLevel.FAIL,
-                    f"Panel design is rank-deficient (rank={rank}, series={panel.shape[1]})",
-                )
-            )
-            if rank < 1:
-                flags.append(
-                    flag(
-                        QualityCode.COLLINEAR_SERIES,
-                        QualityLevel.FAIL,
-                        "Series are collinear or constant",
-                    )
-                )
+    if np.all(np.isfinite(panel)):
+        flags.extend(panel_rank_flags(panel))
 
     usable = not any(f.level is QualityLevel.FAIL for f in flags)
     sample = SampleWindow(
@@ -433,6 +411,196 @@ def prepare_panel(
         usable=usable,
     )
     return (panel if panel.size else None), prepared
+
+
+_RANK_REL_TOL = 1e-8
+_DUPLICATE_ATOL = 1e-12
+
+
+def panel_rank_flags(panel: np.ndarray) -> tuple[QualityFlag, ...]:
+    """Fail closed on constant, duplicate, rank-deficient, or near-collinear columns.
+
+    Johansen / basket diagnostics cannot use an invalid covariance system.
+    High economic correlation (e.g. cointegrated series with a non-degenerate
+    residual) is allowed; numerical rank deficiency is not.
+    """
+
+    if panel.ndim != 2 or panel.size == 0:
+        return ()
+    n_obs, n_series = panel.shape
+    if n_series < 2:
+        return ()
+
+    flags: list[QualityFlag] = []
+    for j in range(n_series):
+        col = panel[:, j]
+        if variance_is_degenerate(col):
+            flags.append(
+                flag(
+                    QualityCode.CONSTANT_SERIES,
+                    QualityLevel.FAIL,
+                    f"Panel column {j} is constant or near-constant",
+                )
+            )
+            flags.append(
+                flag(
+                    QualityCode.NEAR_SINGULAR,
+                    QualityLevel.FAIL,
+                    "A constant column makes the panel covariance system unusable",
+                )
+            )
+            flags.append(
+                flag(
+                    QualityCode.INSUFFICIENT_RANK,
+                    QualityLevel.FAIL,
+                    f"Panel rank is deficient because column {j} has degenerate variance",
+                )
+            )
+            return tuple(flags)
+
+    for i in range(n_series):
+        for j in range(i + 1, n_series):
+            if np.allclose(panel[:, i], panel[:, j], rtol=0.0, atol=_DUPLICATE_ATOL):
+                flags.append(
+                    flag(
+                        QualityCode.COLLINEAR_SERIES,
+                        QualityLevel.FAIL,
+                        f"Panel columns {i} and {j} are duplicates",
+                    )
+                )
+                flags.append(
+                    flag(
+                        QualityCode.NEAR_SINGULAR,
+                        QualityLevel.FAIL,
+                        "Duplicate columns make the panel covariance system unusable",
+                    )
+                )
+                flags.append(
+                    flag(
+                        QualityCode.INSUFFICIENT_RANK,
+                        QualityLevel.FAIL,
+                        "Duplicate columns reduce panel rank below the number of series",
+                    )
+                )
+                return tuple(flags)
+
+    if n_obs < n_series:
+        flags.append(
+            flag(
+                QualityCode.INSUFFICIENT_RANK,
+                QualityLevel.FAIL,
+                f"Need at least as many rows as series for a full-rank panel; got rows={n_obs}, series={n_series}",
+            )
+        )
+        flags.append(
+            flag(
+                QualityCode.NEAR_SINGULAR,
+                QualityLevel.FAIL,
+                "Panel is rank-deficient because n_obs < n_series",
+            )
+        )
+        return tuple(flags)
+
+    centered = panel - np.mean(panel, axis=0, keepdims=True)
+    try:
+        singular_values = np.linalg.svd(centered, compute_uv=False)
+    except np.linalg.LinAlgError:
+        return (
+            flag(
+                QualityCode.NEAR_SINGULAR,
+                QualityLevel.FAIL,
+                "Panel SVD failed; treating the covariance system as unusable",
+            ),
+            flag(
+                QualityCode.INSUFFICIENT_RANK,
+                QualityLevel.FAIL,
+                "Could not establish full column rank",
+            ),
+        )
+
+    smax = float(singular_values[0]) if singular_values.size else 0.0
+    if not np.isfinite(smax) or smax <= 0:
+        return (
+            flag(
+                QualityCode.NEAR_SINGULAR,
+                QualityLevel.FAIL,
+                "Panel has a degenerate singular-value spectrum",
+            ),
+            flag(
+                QualityCode.INSUFFICIENT_RANK,
+                QualityLevel.FAIL,
+                "Centered panel rank is zero",
+            ),
+        )
+
+    rel = singular_values / smax
+    rank = int(np.sum(rel > _RANK_REL_TOL))
+    if rank < n_series:
+        flags.append(
+            flag(
+                QualityCode.NEAR_SINGULAR,
+                QualityLevel.FAIL,
+                f"Panel is rank-deficient or near-collinear (rank={rank}, series={n_series}, "
+                f"smallest_relative_sv={float(rel[-1]):.3e})",
+            )
+        )
+        flags.append(
+            flag(
+                QualityCode.INSUFFICIENT_RANK,
+                QualityLevel.FAIL,
+                f"Centered panel rank {rank} is below n_series={n_series}",
+            )
+        )
+        flags.append(
+            flag(
+                QualityCode.COLLINEAR_SERIES,
+                QualityLevel.FAIL,
+                "Columns are linearly dependent or near-collinear in the formation window",
+            )
+        )
+    return tuple(flags)
+
+
+def length_mismatch_flag(y_len: int, x_len: int, *, what: str = "y and x") -> QualityFlag | None:
+    if y_len == x_len:
+        return None
+    return flag(
+        QualityCode.LENGTH_MISMATCH,
+        QualityLevel.FAIL,
+        f"{what} have unequal lengths ({y_len} vs {x_len}); refusing to truncate or pair misaligned rows",
+    )
+
+
+def timestamp_mismatch_flag(
+    timestamps: Sequence[datetime] | np.ndarray | None,
+    other_timestamps: Sequence[datetime] | np.ndarray | None,
+) -> QualityFlag | None:
+    """Require timestamps to match when either side supplies them."""
+
+    if timestamps is None and other_timestamps is None:
+        return None
+    if timestamps is None or other_timestamps is None:
+        return flag(
+            QualityCode.TIMESTAMP_MISMATCH,
+            QualityLevel.FAIL,
+            "Timestamps were supplied for only one series; both legs must share aligned timestamps",
+        )
+    try:
+        left = _timestamps_to_datetime64(timestamps)
+        right = _timestamps_to_datetime64(other_timestamps)
+    except (TypeError, ValueError) as exc:
+        return flag(
+            QualityCode.INVALID_INPUT,
+            QualityLevel.FAIL,
+            f"Could not parse timestamps for alignment: {exc}",
+        )
+    if left.size != right.size or not np.array_equal(left, right):
+        return flag(
+            QualityCode.TIMESTAMP_MISMATCH,
+            QualityLevel.FAIL,
+            "y and x timestamps are not identical; refusing to pair misaligned dates",
+        )
+    return None
 
 
 def ols_with_intercept(y: np.ndarray, x: np.ndarray) -> tuple[np.ndarray, np.ndarray, int]:

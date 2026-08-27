@@ -6,6 +6,19 @@ This Stage 6 branch (`cursor/chan-stage6-research-loop-6fec`) is a **temporary
 integration checkout**. It copies Stage 1–5 *research packages* onto the Stage 6
 branch so adapters can call native APIs. It does **not** merge those PRs to `main`.
 
+### Integration package heads (refreshed 2026-08-27)
+
+| Stage | PR | Owning branch head | Copied onto Stage 6? |
+|---|---|---|---|
+| 1 | #4 | `d2b3218` Fail closed on misaligned CADF inputs and rank-deficient panels | **yes** (refreshed this pass) |
+| 2 | #11 | `b0d3e7f` Add Stage 2 mean-reversion eligibility engine | yes (no newer head this pass) |
+| 3 | #10 | `30cf67e` Add Stage 3 multi-speed trend and futures carry research module | yes (unchanged) |
+| 4 | #13 | `f5db175` Add Stage 4 edge-health and structural-break monitoring | yes (no newer head this pass) |
+| 5 | #14 | `0c687c9` Add Stage 5 anti-overfit promotion gates and Kelly ceiling | yes (unchanged) |
+| 6 | #12 | this branch | — |
+
+Stage 2 and Stage 4 did **not** publish dependency-update heads during this pass. Their packages stay at the commits above and are re-tested against copied Stage 1 `d2b3218` on this integration branch.
+
 ```text
 main
  ├── PR #2   paper-only safety           cursor/paper-only-safety-hardening-072f
@@ -15,21 +28,21 @@ main
  │     docs only: research plane stays unwired to hourlyMarketAgent
  │
  ├── PR #4   Stage 1 diagnostics         cursor/chan-stage1-statistical-diagnostics-fd6c
- │     research/statistical_diagnostics  (northstar_diagnostics)
+ │     head d2b3218  research/statistical_diagnostics  (northstar_diagnostics)
  │     ├── PR #11 Stage 2 eligibility    cursor/chan-stage2-mean-reversion-eligibility-7dee
- │     │     research/mean_reversion_eligibility  (northstar_mean_reversion)
+ │     │     head b0d3e7f  research/mean_reversion_eligibility  (northstar_mean_reversion)
  │     │     evaluate_candidate(candidate, *, config=)
  │     └── PR #13 Stage 4 edge health    cursor/chan-stage4-edge-health-136d
- │           research/edge_health  (northstar_edge_health)
+ │           head f5db175  research/edge_health  (northstar_edge_health)
  │           HealthMonitor.evaluate(evidence, *, identity=)
  │
  ├── PR #10  Stage 3 trend/carry         cursor/chan-stage3-trend-carry-1042  (from main)
- │     research/trend_carry  (northstar_trend_carry)
+ │     head 30cf67e  research/trend_carry  (northstar_trend_carry)
  │     evaluate_asset_trend(series, config=None, *, as_of=)
  │     refuse_performance_sweep_selection(lookback_to_metric)
  │
  ├── PR #14  Stage 5 anti-overfit        cursor/chan-stage5-anti-overfit-promotion-add0  (from main)
- │     research/anti_overfit_promotion  (northstar_promotion)
+ │     head 0c687c9  research/anti_overfit_promotion  (northstar_promotion)
  │     evaluate_promotion(evidence: PromotionEvidence, config=None)
  │     kelly_ceiling(returns, *, caps=)
  │

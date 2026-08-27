@@ -23,6 +23,8 @@ class QualityCode:
     INVALID_FRICTION = "invalid_friction"
     INVALID_EDGE = "invalid_edge"
     INVALID_INPUT = "invalid_input"
+    LENGTH_MISMATCH = "length_mismatch"
+    TIMESTAMP_MISMATCH = "timestamp_mismatch"
     UNSORTED_TIMESTAMPS = "unsorted_timestamps"
     MISSING_TIMESTAMPS = "missing_timestamps"
     INTERIOR_MISSING = "interior_missing"
