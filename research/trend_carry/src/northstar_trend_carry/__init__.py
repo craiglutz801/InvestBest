@@ -20,6 +20,7 @@ from northstar_trend_carry.futures import (
     FuturesChainProvider,
     FuturesContractObservation,
     InMemoryFuturesProvider,
+    QuoteSyncConfig,
     evaluate_carry,
     required_provider_fields,
 )
@@ -42,7 +43,7 @@ from northstar_trend_carry.robustness import (
 from northstar_trend_carry.schema import DEFAULT_HORIZONS, HorizonSpec, SCHEMA_VERSION
 from northstar_trend_carry.series import PriceSeries
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "SCHEMA_VERSION",
@@ -65,6 +66,7 @@ __all__ = [
     "ContractChain",
     "FuturesChainProvider",
     "InMemoryFuturesProvider",
+    "QuoteSyncConfig",
     "CarrySnapshot",
     "evaluate_carry",
     "required_provider_fields",

@@ -26,6 +26,9 @@ def test_continuous_and_executable_are_separate_types():
     payload_e = executable.to_dict()
     assert payload_c["is_order"] is False
     assert payload_e["is_live_futures_execution"] is False
+    assert "estimated_roll_friction" not in payload_e
+    assert "curve_gap" in payload_e
+    assert "execution_roll_friction" in payload_e
     assert "prices" in payload_c
     assert "selected_contract" in payload_e
     assert "selected_contract" not in payload_c

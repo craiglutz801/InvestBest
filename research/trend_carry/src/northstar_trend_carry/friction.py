@@ -5,6 +5,10 @@ delegates to that implementation. Otherwise a local fallback computes
 EFR = expected_gross_edge / expected_round_trip_friction using the same
 component names, including ``futures_roll``.
 
+``futures_roll`` is **execution** roll friction only (commission/fees, bid/ask
+spread, impact/slippage). The listed-contract curve/basis gap is carry, not a
+cost, and must not be copied into this slot.
+
 This hook never places an order.
 """
 
@@ -21,15 +25,15 @@ from northstar_trend_carry.schema import (
     RESEARCH_ONLY_NOTE,
     SampleWindow,
     empty_sample,
-    jsonable,
     library_versions,
     result_envelope,
-    utcnow,
 )
 
 EFR_ASSUMPTIONS = (
     "EFR = expected_gross_edge / expected_round_trip_friction in identical units.",
-    "Friction may include commission, spread, slippage, impact, borrow, dividend substitute, financing, and futures roll.",
+    "Friction may include commission, spread, slippage, impact, borrow, dividend substitute, financing, and futures roll *execution* costs.",
+    "futures_roll is transaction friction for rolling listed contracts, never the front/deferred curve gap.",
+    "If execution roll friction is unknown, it must be caller-supplied; it is not inferred from F_next - F_front.",
     "Research bands (fragile below ~2.5) are configurable and must not create trades.",
     "Stage 1 northstar_diagnostics is used when installed; otherwise a local fallback is used.",
 )
@@ -57,12 +61,20 @@ class FrictionInputs:
 
 
 def merge_roll_friction(base: FrictionInputs, carry: CarrySnapshot) -> FrictionInputs:
-    """Add estimated listed-contract roll friction into the futures_roll slot."""
+    """Merge *execution* roll friction only.
 
-    extra = carry.estimated_roll_friction or 0.0
-    if extra != extra or extra in (float("inf"), float("-inf")):
-        extra = 0.0
-    return replace(base, futures_roll=float(base.futures_roll) + abs(float(extra)))
+    The curve/basis gap (``carry.curve_gap`` / ``carry.roll_gap``) is economic
+    carry and is never added to ``futures_roll``. If bid/ask (or caller fees)
+    are absent, execution friction stays unknown and ``base`` is returned
+    unchanged.
+    """
+
+    extra = carry.execution_roll_friction
+    if extra is None:
+        return base
+    if extra != extra or extra in (float("inf"), float("-inf")) or extra < 0:
+        return base
+    return replace(base, futures_roll=float(base.futures_roll) + float(extra))
 
 
 def _try_stage1_efr(
@@ -93,6 +105,7 @@ def _try_stage1_efr(
     payload["efr_implementation"] = "stage1_northstar_diagnostics"
     payload["is_order"] = False
     payload["activates_production_signal"] = False
+    payload["curve_gap_is_not_execution_friction"] = True
     return payload
 
 
@@ -161,6 +174,7 @@ def research_edge_to_friction(
             interpretation="not_computed",
             assumptions=EFR_ASSUMPTIONS,
             notes=(RESEARCH_ONLY_NOTE,),
+            details={"curve_gap_is_not_execution_friction": True},
             as_of=as_of,
             computed_at=computed_at,
         )
@@ -192,7 +206,11 @@ def research_edge_to_friction(
         interpretation=interpretation,
         assumptions=EFR_ASSUMPTIONS,
         notes=(RESEARCH_ONLY_NOTE, "Thresholds are research defaults and must remain configurable."),
-        details={"friction": components, "library_versions": library_versions()},
+        details={
+            "friction": components,
+            "library_versions": library_versions(),
+            "curve_gap_is_not_execution_friction": True,
+        },
         as_of=as_of,
         computed_at=computed_at,
     )

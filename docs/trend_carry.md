@@ -42,8 +42,8 @@ The module therefore:
 | Persistence / whipsaw | How often the point-in-time ensemble sign flipped in a trailing window. |
 | Vol shock | Whether current realized vol is elevated vs a trailing median. |
 | Plateau report | Whether neighboring lookbacks share a sign (a stability property). |
-| Carry / curve state | Contango vs backwardation and an annualized roll-yield **from caller-supplied prices**. |
-| EFR hook | Whether a **caller-supplied** expected edge covers **caller-supplied** friction, including futures roll. |
+| Carry / curve state | Contango vs backwardation and an annualized roll-yield **from caller-supplied, temporally aligned prices**. The front/deferred **curve gap is carry**, not a cost. |
+| EFR hook | Whether a **caller-supplied** expected edge covers **caller-supplied execution friction**, including futures *roll transaction* costs when known. |
 
 ## What they cannot establish
 
@@ -51,11 +51,16 @@ The module therefore:
 - That one lookback is the correct trading parameter (the module will not pick it).
 - That back-adjusted continuous prices equal tradeable P&L.
 - That short expression is permitted by the broker or RiskGovernor.
-- Expected edge or friction from market data (those remain caller inputs).
+- Expected edge or **execution** friction from market data when bid/ask/fees are absent (those remain caller inputs; the curve gap is not a substitute).
 - Live contract selection, roll execution, leverage, or order routing.
 
 Health labels (`healthy` / `mixed` / `degraded`) are **research tags**. Stage 4
 owns formal throttle / pause / retire contracts. Nothing here places an order.
+
+Stage 6's native adapter calls `evaluate_asset_trend(series, config, *, as_of=)`
+and `refuse_performance_sweep_selection`. Those signatures are unchanged by the
+carry/friction correction. CarrySnapshot no longer exposes
+`estimated_roll_friction`; Stage 6 does not read that field.
 
 ## Ensemble construction (no optimized lookback)
 
@@ -88,12 +93,20 @@ adjustments use only same-session (or earlier) prices of the outgoing and
 incoming contracts. Missing old-front quotes are **not** filled from the
 future.
 
+Carry snapshots additionally fail closed when:
+
+- any observation `root` does not match `ContractChain.root`;
+- the front or deferred quote is older than `QuoteSyncConfig.max_quote_age` vs `as_of` (default 3 days);
+- front and deferred quote timestamps differ by more than `max_front_next_skew` (default 1 day).
+
+Stale or misaligned pairs do **not** produce a usable contango/backwardation/carry reading.
+
 ## Research continuous vs executable economics
 
 | Representation | Use | Must not be used as |
 |---|---|---|
 | `ResearchContinuousSeries` | Trend research on a back-adjusted path (`not_executable_pnl=True`) | Trade P&L, margin, or an order |
-| `ExecutableContractEconomics` | Which listed contract is front, DTE, roll direction, estimated roll friction | A continuous price series or a broker instruction |
+| `ExecutableContractEconomics` | Which listed contract is front, DTE, roll direction, **curve/roll gap** (carry), and **execution** roll friction when bid/ask are present | A continuous price series, a broker instruction, or a substitute for carry |
 
 Trend on the continuous series and carry on the listed curve are **complementary
 context**. Do not add them as if they were independent bets on the same contract
@@ -116,7 +129,17 @@ This package copies those field names on `FrictionInputs`.
 1. Tries `from northstar_diagnostics.efr import edge_to_friction_ratio`.
 2. If that import fails, computes the same ratio locally.
 
-`merge_roll_friction` adds `|F_next - F_front| / |F_front|` into `futures_roll`.
+`merge_roll_friction` copies **only** `carry.execution_roll_friction` into
+`futures_roll`. That estimate is the sum of bid/ask half-spreads on the two
+roll legs when both books are present. If bid/ask are absent, execution
+friction is **unknown**: the function leaves caller-supplied `FrictionInputs`
+unchanged and does **not** infer a cost from `|F_next - F_front| / |F_front|`.
+
+That relative price gap is stored separately as `curve_gap` / `roll_gap`
+(signed `(F_next - F_front) / |F_front|`). It is the curve/basis term that
+drives roll yield. Treating it as friction would double-count the same
+economic effect (once as carry, again as a cost).
+
 There is **no required git dependency** on the Stage 1 branch.
 
 ## Provider fields needed later (real-data shadow testing)

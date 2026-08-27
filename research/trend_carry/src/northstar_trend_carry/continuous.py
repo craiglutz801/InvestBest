@@ -12,13 +12,14 @@ from datetime import datetime
 from northstar_trend_carry.futures import (
     CarrySnapshot,
     ContractChain,
+    QuoteSyncConfig,
     evaluate_carry,
     last_quotes_by_contract,
     live_quotes,
     observations_as_of,
 )
 from northstar_trend_carry.quality import QualityCode, QualityLevel, flag
-from northstar_trend_carry.schema import QualityFlag, RESEARCH_ONLY_NOTE, jsonable, utcnow
+from northstar_trend_carry.schema import QualityFlag, RESEARCH_ONLY_NOTE, jsonable
 from northstar_trend_carry.series import PriceSeries, _as_utc
 
 CONTINUOUS_WARNING = (
@@ -100,13 +101,17 @@ class ExecutableContractEconomics:
     days_to_expiry: int | None
     roll_recommended: bool
     roll_direction: str | None
-    estimated_roll_friction: float | None
+    curve_gap: float | None
+    roll_gap: float | None
+    execution_roll_friction: float | None
+    execution_roll_friction_source: str
     carry: CarrySnapshot
     not_research_continuous: bool
     quality_flags: tuple[QualityFlag, ...]
     notes: tuple[str, ...] = (
         RESEARCH_ONLY_NOTE,
-        "Executable economics describe listed-contract identity and roll costs only.",
+        "Executable economics describe listed-contract identity, curve/carry gap, and execution roll friction when known.",
+        "curve_gap/roll_gap is not transaction friction and is not an order.",
         "This object is not a broker instruction and does not enable futures execution.",
     )
 
@@ -120,7 +125,10 @@ class ExecutableContractEconomics:
             "days_to_expiry": self.days_to_expiry,
             "roll_recommended": self.roll_recommended,
             "roll_direction": self.roll_direction,
-            "estimated_roll_friction": jsonable(self.estimated_roll_friction),
+            "curve_gap": jsonable(self.curve_gap),
+            "roll_gap": jsonable(self.roll_gap),
+            "execution_roll_friction": jsonable(self.execution_roll_friction),
+            "execution_roll_friction_source": self.execution_roll_friction_source,
             "carry": self.carry.to_dict(),
             "not_research_continuous": self.not_research_continuous,
             "quality_flags": [f.to_dict() for f in self.quality_flags],
@@ -135,8 +143,9 @@ def executable_contract_state(
     *,
     as_of: datetime,
     roll_lead_days: int = 5,
+    quote_sync: QuoteSyncConfig | None = None,
 ) -> ExecutableContractEconomics:
-    carry = evaluate_carry(chain, as_of=as_of, roll_lead_days=roll_lead_days)
+    carry = evaluate_carry(chain, as_of=as_of, roll_lead_days=roll_lead_days, quote_sync=quote_sync)
     return ExecutableContractEconomics(
         as_of=carry.as_of,
         root=chain.root,
@@ -146,7 +155,10 @@ def executable_contract_state(
         days_to_expiry=carry.days_to_front_expiry,
         roll_recommended=carry.roll_recommended,
         roll_direction=carry.roll_direction,
-        estimated_roll_friction=carry.estimated_roll_friction,
+        curve_gap=carry.curve_gap,
+        roll_gap=carry.roll_gap,
+        execution_roll_friction=carry.execution_roll_friction,
+        execution_roll_friction_source=carry.execution_roll_friction_source,
         carry=carry,
         not_research_continuous=True,
         quality_flags=carry.quality_flags,
