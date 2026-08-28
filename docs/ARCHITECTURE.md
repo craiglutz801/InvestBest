@@ -32,4 +32,5 @@ cd apps/web && npm run db:push && npm run db:seed
 
 ## Key docs
 
+- **NorthstarAlpha master vision and architecture:** [`docs/NORTHSTARALPHA.md`](NORTHSTARALPHA.md)
 - Build requirements: `docs/InvestBest_Cursor_Build_Spec.md`

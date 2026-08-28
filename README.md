@@ -16,6 +16,8 @@ Paper-trading web app: hourly agent, curated equity/ETF universe, auditable deci
 
 Architecture overview: **`docs/ARCHITECTURE.md`**.
 
+**NorthstarAlpha (what we are building):** the master vision, Chan research stack, strategy families, and target architecture are in **[`docs/NORTHSTARALPHA.md`](docs/NORTHSTARALPHA.md)**. The hourly paper engine in this README is the current sandbox, not the long-term alpha architecture.
+
 ### Quick start (web + DB)
 
 ```bash
